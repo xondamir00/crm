@@ -119,10 +119,7 @@ export class ManagersService {
       where: { id: userId, role: Role.MANAGER },
     });
     if (!u) throw new NotFoundException('Manager not found');
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { isActive: false },
-    });
+    await this.prisma.user.delete({ where: { id: userId } });
     return { success: true };
   }
 }

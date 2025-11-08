@@ -1,244 +1,210 @@
 import {
   BadRequestException,
   Injectable,
-  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { CreateGroupDto } from './dto/create-group.dto';
-import { DayOfWeek } from '@prisma/client';
-import { PrismaService } from 'prisma/prisma.service';
 import { UpdateGroupDto } from './dto/update-group.dto';
+import { QueryGroupDto } from './dto/query-group.dto';
+import { assertActiveNameUnique } from './policies/name-unique.policy';
+import { assertGroupCapacityLTEToRoom } from './policies/capacity-vs-room.policy';
+import { assertNoRoomScheduleConflict } from './policies/schedule-conflict.policy';
+import { PrismaService } from 'prisma/prisma.service';
+import { hhmmToMinutes, minutesToHhmm } from 'src/common/utils/time.util';
+import { EnrollmentStatus } from '@prisma/client';
 
 @Injectable()
-export class GroupService {
+export class GroupsService {
   constructor(private prisma: PrismaService) {}
 
-  private toMinutes(t: string) {
-    const [h, m] = t.split(':').map(Number);
-    return h * 60 + m;
-  }
-
-  private buildDays(
-    mode: 'ODD' | 'EVEN' | 'CUSTOM',
-    days?: DayOfWeek[],
-  ): DayOfWeek[] {
-    if (mode === 'ODD') return [DayOfWeek.MON, DayOfWeek.WED, DayOfWeek.FRI];
-    if (mode === 'EVEN') return [DayOfWeek.TUE, DayOfWeek.THU, DayOfWeek.SAT];
-    if (!days || days.length === 0) {
-      throw new BadRequestException('For CUSTOM schedule, "days" is required');
-    }
-    return days;
-  }
-
   async create(dto: CreateGroupDto) {
-    const s = this.toMinutes(dto.schedule.startTime);
-    const e = this.toMinutes(dto.schedule.endTime);
-    if (s >= e)
-      throw new BadRequestException('startTime must be before endTime');
+    if (dto.monthlyFee < 0)
+      throw new BadRequestException('monthlyFee manfiy bo‘lolmaydi');
+
+    const startMinutes = hhmmToMinutes(dto.startTime);
+    const endMinutes = hhmmToMinutes(dto.endTime);
+    if (startMinutes >= endMinutes)
+      throw new BadRequestException('startTime < endTime bo‘lishi kerak');
+
+    await assertActiveNameUnique(this.prisma, dto.name);
 
     if (dto.roomId) {
-      const room = await this.prisma.room.findUnique({
-        where: { id: dto.roomId },
+      await assertGroupCapacityLTEToRoom(this.prisma, dto.roomId, dto.capacity);
+      await assertNoRoomScheduleConflict(this.prisma, {
+        roomId: dto.roomId,
+        daysPattern: dto.daysPattern as any,
+        startMinutes,
+        endMinutes,
       });
-      if (!room || !room.isActive) {
-        throw new NotFoundException('Room not found or inactive');
-      }
     }
 
-    const days = this.buildDays(dto.schedule.mode, dto.schedule.days);
-
-    try {
-      console.log('CREATE GROUP DTO →', JSON.stringify(dto));
-      return await this.prisma.$transaction(async (tx) => {
-        const group = await tx.group.create({
-          data: {
-            name: dto.name,
-            roomId: dto.roomId ?? null,
-            capacity: dto.capacity,
-          },
-          include: {
-            room: { select: { id: true, name: true } },
-          },
-        });
-
-        if (days.length) {
-          await tx.groupSchedule.createMany({
-            data: days.map((d) => ({
-              groupId: group.id,
-              day: d,
-              startTime: dto.schedule.startTime,
-              endTime: dto.schedule.endTime,
-            })),
-            skipDuplicates: true,
-          });
-        }
-
-        const full = await tx.group.findUnique({
-          where: { id: group.id },
-          include: {
-            room: { select: { id: true, name: true } },
-            schedule: {
-              select: { day: true, startTime: true, endTime: true },
-              orderBy: { day: 'asc' },
-            },
-            _count: { select: { students: true } },
-          },
-        });
-        const current = full!._count.students;
-        const remaining = Math.max((full!.capacity ?? 0) - current, 0);
-        const isFull = current >= (full!.capacity ?? 0);
-
-        const { _count, ...rest } = full!;
-        return {
-          ...rest,
-          stats: { capacity: rest.capacity, current, remaining, isFull },
-        };
-      });
-    } catch (e: any) {
-      console.error('❌ Group create error (raw):', e); // to‘liq obyekt
-      console.error('❌ message:', e?.message);
-      console.error('❌ code:', e?.code); // P2002, P2003, ...
-      console.error('❌ meta:', e?.meta);
-      throw new InternalServerErrorException(
-        e?.message || 'Group create failed',
-      );
-      console.error('Group create error:', e);
-      throw new InternalServerErrorException(
-        e.message ?? 'Group create failed',
-      );
-    }
-  }
-
-  list() {
-    return this.prisma.group.findMany({
-      where: { isActive: true },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        room: { select: { id: true, name: true } },
-        schedule: { select: { day: true, startTime: true, endTime: true } },
+    const created = await this.prisma.group.create({
+      data: {
+        name: dto.name.trim(),
+        capacity: dto.capacity,
+        daysPattern: dto.daysPattern as any,
+        startMinutes,
+        endMinutes,
+        monthlyFee: dto.monthlyFee,
+        roomId: dto.roomId ?? null,
       },
     });
+
+    return this.toView(created);
   }
+
+  async findAll(q: QueryGroupDto) {
+    const { search, daysPattern, isActive, roomId, page = 1, limit = 10 } = q;
+
+    const where: any = {};
+    if (typeof isActive === 'boolean') where.isActive = isActive;
+    if (daysPattern) where.daysPattern = daysPattern;
+    if (roomId) where.roomId = roomId;
+    if (search?.trim()) {
+      where.OR = [{ name: { contains: search.trim(), mode: 'insensitive' } }];
+    }
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.group.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.group.count({ where }),
+    ]);
+
+    return {
+      meta: { page, limit, total, pages: Math.ceil(total / limit) },
+      items: items.map((g) => this.toView(g)),
+    };
+  }
+
+  async findOne(id: string) {
+    const g = await this.prisma.group.findUnique({ where: { id } });
+    if (!g) throw new NotFoundException('Guruh topilmadi');
+    return this.toView(g);
+  }
+  async getStats(id: string) {
+    const [group, activeCount] = await this.prisma.$transaction([
+      this.prisma.group.findUnique({
+        where: { id },
+        select: { id: true, name: true, capacity: true, isActive: true },
+      }),
+      this.prisma.enrollment.count({
+        where: { groupId: id, status: 'ACTIVE' as EnrollmentStatus },
+      }),
+    ]);
+
+    if (!group) throw new NotFoundException('Guruh topilmadi');
+
+    const remaining = Math.max(group.capacity - activeCount, 0);
+    const isFull = activeCount >= group.capacity;
+
+    return {
+      group: {
+        id: group.id,
+        name: group.name,
+        isActive: group.isActive,
+        capacity: group.capacity,
+      },
+      activeEnrollments: activeCount,
+      remaining,
+      isFull,
+    };
+  }
+
   async update(id: string, dto: UpdateGroupDto) {
-    if (dto.schedule?.startTime && dto.schedule?.endTime) {
-      const s = this.toMinutes(dto.schedule.startTime);
-      const e = this.toMinutes(dto.schedule.endTime);
-      if (s >= e)
-        throw new BadRequestException('startTime must be before endTime');
+    const prev = await this.prisma.group.findUnique({ where: { id } });
+    if (!prev) throw new NotFoundException('Guruh topilmadi');
+
+    if (dto.name) {
+      await assertActiveNameUnique(this.prisma, dto.name, id);
     }
 
-    if (dto.roomId) {
-      const room = await this.prisma.room.findUnique({
-        where: { id: dto.roomId },
+    let startMinutes = prev.startMinutes;
+    let endMinutes = prev.endMinutes;
+
+    if (dto.startTime) startMinutes = hhmmToMinutes(dto.startTime);
+    if (dto.endTime) endMinutes = hhmmToMinutes(dto.endTime);
+    if (startMinutes >= endMinutes)
+      throw new BadRequestException('startTime < endTime bo‘lishi kerak');
+
+    const capacity = dto.capacity ?? prev.capacity;
+    const roomId = dto.roomId ?? prev.roomId ?? undefined;
+    const daysPattern = (dto.daysPattern ?? prev.daysPattern) as any;
+
+    if (roomId) {
+      await assertGroupCapacityLTEToRoom(this.prisma, roomId, capacity);
+      await assertNoRoomScheduleConflict(this.prisma, {
+        roomId,
+        daysPattern,
+        startMinutes,
+        endMinutes,
+        excludeId: id,
       });
-      if (!room || !room.isActive) {
-        throw new NotFoundException('Room not found or inactive');
-      }
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      await tx.group.update({
-        where: { id },
-        data: {
-          name: dto.name ?? undefined,
-          roomId: dto.roomId === null ? null : (dto.roomId ?? undefined),
-          capacity: dto.capacity ?? undefined,
-        },
-      });
+    const isActive = dto.isActive ?? prev.isActive;
 
-      if (dto.schedule) {
-        const days = this.buildDays(dto.schedule.mode, dto.schedule.days);
-        await tx.groupSchedule.deleteMany({ where: { groupId: id } });
-
-        if (days.length) {
-          await tx.groupSchedule.createMany({
-            data: days.map((d) => ({
-              groupId: id,
-              day: d,
-              startTime: dto.schedule!.startTime,
-              endTime: dto.schedule!.endTime,
-            })),
-            skipDuplicates: true,
-          });
-        }
-      }
-
-      const full = await tx.group.findUnique({
-        where: { id },
-        include: {
-          room: { select: { id: true, name: true } },
-          schedule: {
-            select: { day: true, startTime: true, endTime: true },
-            orderBy: { day: 'asc' },
-          },
-          _count: { select: { students: true } },
-        },
-      });
-      if (!full) throw new NotFoundException('Group not found');
-
-      const current = full._count.students;
-      const remaining = Math.max((full.capacity ?? 0) - current, 0);
-      const isFull = current >= (full.capacity ?? 0);
-      const { _count, ...rest } = full;
-      return {
-        ...rest,
-        stats: { capacity: rest.capacity, current, remaining, isFull },
-      };
+    const updated = await this.prisma.group.update({
+      where: { id },
+      data: {
+        name: dto.name?.trim(),
+        capacity: dto.capacity,
+        daysPattern: dto.daysPattern as any,
+        startMinutes,
+        endMinutes,
+        monthlyFee: dto.monthlyFee,
+        roomId: dto.roomId ?? (dto.roomId === null ? null : undefined),
+        isActive,
+        deactivatedAt:
+          prev.isActive && isActive === false
+            ? new Date()
+            : isActive && prev.deactivatedAt
+              ? null
+              : undefined,
+        deactivateReason:
+          prev.isActive && isActive === false
+            ? (dto.deactivateReason ?? null)
+            : undefined,
+      },
     });
+
+    return this.toView(updated);
   }
 
-  async replaceSchedule(
-    groupId: string,
-    payload: {
-      mode: 'ODD' | 'EVEN' | 'CUSTOM';
-      startTime: string;
-      endTime: string;
-      days?: DayOfWeek[];
-    },
-  ) {
-    const group = await this.prisma.group.findUnique({
-      where: { id: groupId, isActive: true },
+  async softDelete(id: string, reason?: string) {
+    const g = await this.prisma.group.findUnique({ where: { id } });
+    if (!g) throw new NotFoundException('Guruh topilmadi');
+    if (!g.isActive) return this.toView(g);
+
+    const updated = await this.prisma.group.update({
+      where: { id },
+      data: {
+        isActive: false,
+        deactivatedAt: new Date(),
+        deactivateReason: reason ?? null,
+      },
     });
-    if (!group) throw new NotFoundException('Group not found');
-
-    const s = this.toMinutes(payload.startTime);
-    const e = this.toMinutes(payload.endTime);
-    if (s >= e)
-      throw new BadRequestException('startTime must be before endTime');
-
-    const days = this.buildDays(payload.mode, payload.days);
-
-    return this.prisma.$transaction(async (tx) => {
-      await tx.groupSchedule.deleteMany({ where: { groupId } });
-      if (days.length) {
-        await tx.groupSchedule.createMany({
-          data: days.map((day) => ({
-            groupId,
-            day,
-            startTime: payload.startTime,
-            endTime: payload.endTime,
-          })),
-        });
-      }
-      return tx.group.findUnique({
-        where: { id: groupId },
-        include: {
-          schedule: { select: { day: true, startTime: true, endTime: true } },
-        },
-      });
-    });
+    return this.toView(updated);
   }
-  async remove(id: string) {
-    await this.prisma.$transaction(async (tx) => {
-      await tx.studentProfile.updateMany({
-        where: { groupId: id },
-        data: { groupId: null },
-      });
-      await tx.group.update({
-        where: { id },
-        data: { isActive: false },
-      });
-    });
-    return { success: true };
+
+  private toView(g: any) {
+    return {
+      id: g.id,
+      name: g.name,
+      capacity: g.capacity,
+      daysPattern: g.daysPattern,
+      startTime: minutesToHhmm(g.startMinutes),
+      endTime: minutesToHhmm(g.endMinutes),
+      monthlyFee: g.monthlyFee,
+      isActive: g.isActive,
+      roomId: g.roomId,
+      deactivatedAt: g.deactivatedAt,
+      deactivateReason: g.deactivateReason,
+      createdAt: g.createdAt,
+      updatedAt: g.updatedAt,
+    };
   }
 }

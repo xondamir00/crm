@@ -5,10 +5,11 @@ import { HealthModule } from './health/health.module';
 import { PrismaModule } from 'prisma/prisma.module';
 import { UsersModule } from './users/user.module';
 import { TeachersModule } from './users/teachers/teachers.module';
-import { StudentsModule } from './users/students/students.module';
 import { ManagersModule } from './users/manager/managers.module';
 import { RoomsModule } from './users/room/rooms.module';
 import { GroupModule } from './users/group/group.module';
+import { EnrollmentsModule } from './enrollments/enrollments.module';
+import { StudentsModule } from './users/students/students.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { GroupModule } from './users/group/group.module';
     ManagersModule,
     RoomsModule,
     GroupModule,
+    EnrollmentsModule,
   ],
 })
 export class AppModule {}

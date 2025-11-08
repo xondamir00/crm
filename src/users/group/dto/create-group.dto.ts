@@ -1,25 +1,40 @@
 import {
+  IsEnum,
   IsInt,
   IsOptional,
+  IsPositive,
   IsString,
+  MaxLength,
   Min,
-  ValidateNested,
+  MinLength,
+  Matches,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { GroupScheduleInput } from './schedule.dto';
 
 export class CreateGroupDto {
   @IsString()
+  @MinLength(3)
+  @MaxLength(60)
   name: string;
+
+  @IsInt()
+  @IsPositive()
+  @Min(1)
+  capacity: number;
+
+  @IsEnum(['ODD', 'EVEN'] as const)
+  daysPattern: 'ODD' | 'EVEN';
+
+  @Matches(/^\d{2}:\d{2}$/)
+  startTime: string;
+
+  @Matches(/^\d{2}:\d{2}$/)
+  endTime: string;
+
+  @IsInt()
+  @Min(0)
+  monthlyFee: number;
 
   @IsOptional()
   @IsString()
   roomId?: string;
-  @IsInt()
-  @Min(1)
-  capacity: number;
-
-  @ValidateNested()
-  @Type(() => GroupScheduleInput)
-  schedule: GroupScheduleInput; // majburiy: dars vaqti
 }

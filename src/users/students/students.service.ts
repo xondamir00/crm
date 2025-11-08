@@ -1,205 +1,197 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import * as argon2 from 'argon2';
-import { Prisma, Role } from '@prisma/client';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateStudentDto } from './dto/create-student.dto';
-import { PrismaService } from 'prisma/prisma.service';
 import { UpdateStudentDto } from './dto/update-student.dto';
+import { QueryStudentDto } from './dto/query-student.dto';
+import {
+  assertNoStudentProfileYet,
+  assertPhoneUniqueIfProvided,
+  assertUserExists,
+  normalizePhone,
+} from './policies/student.policies';
+import * as bcrypt from 'bcrypt';
+import { Role } from '@prisma/client';
+import { PrismaService } from 'prisma/prisma.service';
 
 @Injectable()
 export class StudentsService {
   constructor(private prisma: PrismaService) {}
 
+  private toView(row: any) {
+    return {
+      id: row.id,
+      userId: row.user.id,
+      fullName: `${row.user.firstName} ${row.user.lastName}`,
+      phone: row.user.phone,
+      isActive: row.user.isActive,
+      dateOfBirth: row.dateOfBirth,
+      startDate: row.startDate,
+      createdAt: row.user.createdAt,
+    };
+  }
+
   async create(dto: CreateStudentDto) {
-    const exists = await this.prisma.user.findUnique({
-      where: { phone: dto.phone },
-    });
-    if (exists) throw new ConflictException('Phone already used');
+    const dateOfBirth = dto.dateOfBirth ? new Date(dto.dateOfBirth) : null;
+    const startDate = dto.startDate ? new Date(dto.startDate) : null;
 
-    const passwordHash = await argon2.hash(dto.password);
+    const phone = normalizePhone(dto.phone);
+    await assertPhoneUniqueIfProvided(this.prisma, phone);
 
-    return this.prisma.$transaction(async (tx) => {
-      if (dto.groupId) {
-        const g = await tx.group.findUnique({
-          where: { id: dto.groupId, isActive: true },
-        });
-        if (!g) throw new NotFoundException('Group not found or inactive');
-      }
+    const passwordHash = await bcrypt.hash(dto.password!, 10);
 
+    const created = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          phone: dto.phone,
+          firstName: dto.firstName!,
+          lastName: dto.lastName!,
+          phone: phone!,
           passwordHash,
           role: Role.STUDENT,
-        },
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          phone: true,
-          role: true,
+          isActive: true,
         },
       });
 
-      await tx.studentProfile.create({
+      const sp = await tx.studentProfile.create({
         data: {
           userId: user.id,
-          dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
-          startDate: dto.startDate ? new Date(dto.startDate) : undefined,
-          groupId: dto.groupId ?? null,
+          dateOfBirth: dateOfBirth ?? undefined,
+          startDate: startDate ?? undefined,
         },
+        include: { user: true },
       });
 
-      return user;
+      return sp;
     });
+
+    return this.toView(created);
   }
 
-  async updateGroup(userId: string, groupId: string | null | undefined) {
-    if (groupId === undefined) {
-      throw new BadRequestException(
-        'Provide "groupId" (string) or null to detach',
-      );
-    }
-
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const user = await tx.user.findUnique({
-        where: { id: userId, role: Role.STUDENT, isActive: true },
-        select: { id: true },
-      });
-      if (!user) throw new NotFoundException('Student not found or inactive');
-
-      await tx.studentProfile.upsert({
-        where: { userId: userId },
-        update: {},
-        create: { userId: userId },
-      });
-
-      if (groupId === null) {
-        const updated = await tx.studentProfile.update({
-          where: { userId },
-          data: { groupId: null },
-          select: { userId: true, groupId: true },
-        });
-        return { message: 'Detached from group', ...updated };
-      }
-
-      const group = await tx.group.findUnique({
-        where: { id: groupId, isActive: true },
-        select: { id: true },
-      });
-      if (!group) throw new NotFoundException('Group not found or inactive');
-
-      const updated = await tx.studentProfile.update({
-        where: { userId },
-        data: { groupId },
-        select: {
-          userId: true,
-          groupId: true,
-          group: { select: { name: true } },
-        },
-      });
-
-      return { message: 'Assigned to group', ...updated };
-    });
-  }
-
-  list() {
-    return this.prisma.user.findMany({
-      where: { role: Role.STUDENT, isActive: true },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        createdAt: true,
+  async findAll(q: QueryStudentDto) {
+    const { search, isActive, page = 1, limit = 10 } = q;
+    const where: any = {
+      user: {
+        ...(isActive !== undefined
+          ? { isActive: String(isActive) === 'true' }
+          : {}),
       },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-  async update(userId: string, dto: UpdateStudentDto) {
-    if (dto.phone) {
-      const exists = await this.prisma.user.findUnique({
-        where: { phone: dto.phone },
-      });
-      if (exists && exists.id !== userId)
-        throw new ConflictException('Phone already used');
+    };
+
+    if (search?.trim()) {
+      const s = search.trim();
+      where.user = {
+        ...(where.user ?? {}),
+        OR: [
+          { firstName: { contains: s, mode: 'insensitive' } },
+          { lastName: { contains: s, mode: 'insensitive' } },
+          { phone: { contains: s, mode: 'insensitive' } },
+        ],
+      };
     }
 
-    const student = await this.prisma.user.findUnique({
-      where: { id: userId, role: Role.STUDENT },
-      select: { id: true },
-    });
-    if (!student) throw new NotFoundException('Student not found');
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.studentProfile.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { user: { createdAt: 'desc' } },
+        include: { user: true },
+      }),
+      this.prisma.studentProfile.count({ where }),
+    ]);
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const dataUser: any = {
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        phone: dto.phone,
-      };
-      if (dto.password) dataUser.passwordHash = await argon2.hash(dto.password);
-
-      await tx.user.update({ where: { id: userId }, data: dataUser });
-
-      let groupIdUpdate: string | null | undefined = undefined;
-      if (dto.groupId !== undefined) {
-        if (dto.groupId === null) groupIdUpdate = null;
-        else {
-          const g = await tx.group.findUnique({
-            where: { id: dto.groupId, isActive: true },
-          });
-          if (!g) throw new NotFoundException('Group not found or inactive');
-          groupIdUpdate = dto.groupId;
-        }
-      }
-
-      await tx.studentProfile.update({
-        where: { userId },
-        data: {
-          dateOfBirth:
-            dto.dateOfBirth === undefined
-              ? undefined
-              : dto.dateOfBirth
-                ? new Date(dto.dateOfBirth)
-                : null,
-          startDate:
-            dto.startDate === undefined
-              ? undefined
-              : dto.startDate
-                ? new Date(dto.startDate)
-                : null,
-          groupId: groupIdUpdate,
-        },
-      });
-
-      return tx.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          phone: true,
-          role: true,
-        },
-      });
-    });
+    return {
+      meta: { page, limit, total, pages: Math.ceil(total / limit) },
+      items: rows.map((r) => this.toView(r)),
+    };
   }
 
-  async remove(userId: string) {
-    const u = await this.prisma.user.findUnique({
-      where: { id: userId, role: Role.STUDENT },
+  async findOne(id: string) {
+    const row = await this.prisma.studentProfile.findUnique({
+      where: { id },
+      include: { user: true },
     });
-    if (!u) throw new NotFoundException('Student not found');
-    await this.prisma.user.update({
-      where: { id: userId },
+    if (!row) throw new NotFoundException('Student topilmadi');
+    return this.toView(row);
+  }
+
+  async update(id: string, dto: UpdateStudentDto) {
+    const prev = await this.prisma.studentProfile.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+    if (!prev) throw new NotFoundException('Student topilmadi');
+
+    const userData: any = {};
+    if (dto.firstName) userData.firstName = dto.firstName.trim();
+    if (dto.lastName) userData.lastName = dto.lastName.trim();
+    if (dto.phone) {
+      const phone = normalizePhone(dto.phone);
+      await assertPhoneUniqueIfProvided(this.prisma, phone, prev.userId);
+      userData.phone = phone;
+    }
+    if (dto.password) {
+      userData.passwordHash = await bcrypt.hash(dto.password, 10);
+    }
+    if (typeof dto.isActive === 'boolean') {
+      userData.isActive = dto.isActive;
+    }
+
+    const spData: any = {};
+    if (dto.dateOfBirth) spData.dateOfBirth = new Date(dto.dateOfBirth);
+    if (dto.startDate) spData.startDate = new Date(dto.startDate);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (Object.keys(userData).length) {
+        await tx.user.update({ where: { id: prev.userId }, data: userData });
+      }
+      if (Object.keys(spData).length) {
+        await tx.studentProfile.update({ where: { id }, data: spData });
+      }
+      return tx.studentProfile.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+    });
+
+    return this.toView(updated);
+  }
+
+  // Soft-deactivate: user.isActive=false
+  async remove(id: string) {
+    const prev = await this.prisma.studentProfile.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+    if (!prev) throw new NotFoundException('Student topilmadi');
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: prev.userId },
       data: { isActive: false },
     });
-    return { success: true };
+
+    return {
+      id: prev.id,
+      userId: updatedUser.id,
+      fullName: `${updatedUser.firstName} ${updatedUser.lastName}`,
+      phone: updatedUser.phone,
+      isActive: updatedUser.isActive,
+      dateOfBirth: prev.dateOfBirth,
+      startDate: prev.startDate,
+      createdAt: updatedUser.createdAt,
+    };
+  }
+
+  async restore(id: string) {
+    const prev = await this.prisma.studentProfile.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+    if (!prev) throw new NotFoundException('Student topilmadi');
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: prev.userId },
+      data: { isActive: true },
+    });
+
+    return this.toView({ ...prev, user: updatedUser });
   }
 }

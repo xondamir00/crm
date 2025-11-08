@@ -138,9 +138,8 @@ export class TeachersService {
       where: { id: userId, role: Role.TEACHER },
     });
     if (!u) throw new NotFoundException('Teacher not found');
-    await this.prisma.user.update({
+    await this.prisma.user.delete({
       where: { id: userId },
-      data: { isActive: false },
     });
     return { success: true };
   }

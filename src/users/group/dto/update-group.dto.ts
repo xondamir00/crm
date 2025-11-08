@@ -1,27 +1,53 @@
+import { PartialType } from '@nestjs/mapped-types';
+import { CreateGroupDto } from './create-group.dto';
 import {
+  IsEnum,
   IsInt,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
-  ValidateNested,
+  MinLength,
+  Matches,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { GroupScheduleInput } from './schedule.dto';
 
-export class UpdateGroupDto {
+export class UpdateGroupDto extends PartialType(CreateGroupDto) {
   @IsOptional()
   @IsString()
+  @MinLength(3)
+  @MaxLength(60)
   name?: string;
 
   @IsOptional()
-  @IsString()
-  roomId?: string | null;
   @IsInt()
   @Min(1)
-  capacity: number;
+  capacity?: number;
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => GroupScheduleInput)
-  schedule?: GroupScheduleInput;
+  @IsEnum(['ODD', 'EVEN'] as const)
+  daysPattern?: 'ODD' | 'EVEN';
+
+  @IsOptional()
+  @Matches(/^\d{2}:\d{2}$/)
+  startTime?: string;
+
+  @IsOptional()
+  @Matches(/^\d{2}:\d{2}$/)
+  endTime?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  monthlyFee?: number;
+
+  @IsOptional()
+  @IsString()
+  roomId?: string;
+
+  @IsOptional()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsString()
+  deactivateReason?: string;
 }

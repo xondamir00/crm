@@ -1,17 +1,40 @@
 import {
+  IsBoolean,
   IsDateString,
   IsOptional,
-  IsPhoneNumber,
   IsString,
+  MinLength,
 } from 'class-validator';
 
 export class UpdateStudentDto {
-  @IsOptional() @IsString() firstName?: string;
-  @IsOptional() @IsString() lastName?: string;
-  @IsOptional() @IsPhoneNumber('UZ') phone?: string;
-  @IsOptional() @IsString() password?: string;
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  firstName?: string;
 
-  @IsOptional() @IsDateString() dateOfBirth?: string | null;
-  @IsOptional() @IsDateString() startDate?: string | null;
-  @IsOptional() groupId?: string | null;
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  password?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsDateString()
+  dateOfBirth?: string;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
 }

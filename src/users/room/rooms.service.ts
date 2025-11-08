@@ -1,42 +1,83 @@
 import {
-  Injectable,
+  BadRequestException,
   ConflictException,
+  Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { CreateRoomDto } from './dto/create-room.dto';
+import { UpdateRoomDto } from './dto/update-room.dto';
 import { PrismaService } from 'prisma/prisma.service';
 
 @Injectable()
 export class RoomsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(dto: { name: string; capacity?: number }) {
-    try {
-      return await this.prisma.room.create({ data: dto });
-    } catch (e: any) {
-      if (e.code === 'P2002')
-        throw new ConflictException('Room name already exists');
-      throw e;
-    }
-  }
+  async create(dto: CreateRoomDto) {
+    const exists = await this.prisma.room.findUnique({
+      where: { name: dto.name.trim() },
+    });
+    if (exists)
+      throw new ConflictException('Bu nomdagi hona allaqachon mavjud');
 
-  listActive() {
-    return this.prisma.room.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' },
+    if (dto.capacity < 1)
+      throw new BadRequestException('Hona sig`imi 1 dan katta bo`lishi kerak');
+
+    return this.prisma.room.create({
+      data: {
+        name: dto.name.trim(),
+        capacity: dto.capacity,
+      },
     });
   }
 
-  async update(
-    id: string,
-    dto: { name?: string; location?: string; capacity?: number },
-  ) {
-    return this.prisma.room.update({ where: { id }, data: dto });
+  async getAll() {
+    return await this.prisma.room.findMany({
+      select: {
+        name: true,
+        capacity: true,
+      },
+    });
   }
 
-  async deactivate(id: string) {
+  async getOne(id: string) {
     const room = await this.prisma.room.findUnique({ where: { id } });
-    if (!room) throw new NotFoundException('Room not found');
-    await this.prisma.room.update({ where: { id }, data: { isActive: false } });
-    return { success: true };
+    if (!room) throw new NotFoundException('Hona topilmadi');
+    return room;
+  }
+
+  async update(id: string, dto: UpdateRoomDto) {
+    const room = await this.prisma.room.findUnique({ where: { id } });
+    if (!room) throw new NotFoundException('Hona topilmadi');
+
+    if (dto.name) {
+      const exists = await this.prisma.room.findUnique({
+        where: { name: dto.name.trim() },
+      });
+      if (exists && exists.id !== id)
+        throw new ConflictException('Bu nom band');
+    }
+
+    if (dto.capacity !== undefined && dto.capacity < 1) {
+      throw new BadRequestException('Hona sig`imi 1 dan katta bo`lishi kerak');
+    }
+
+    return this.prisma.room.update({
+      where: { id },
+      data: {
+        name: dto.name?.trim() ?? undefined,
+        capacity: dto.capacity ?? undefined,
+        isActive: dto.isActive ?? undefined,
+      },
+    });
+  }
+
+  async remove(id: string) {
+    const room = await this.prisma.room.findUnique({ where: { id } });
+    if (!room) throw new NotFoundException('Hona topilmadi');
+
+    return this.prisma.room.update({
+      where: { id },
+      data: { isActive: false },
+    });
   }
 }

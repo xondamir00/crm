@@ -1,6 +1,20 @@
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsInt,
+  IsPositive,
+  IsString,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 export class CreateRoomDto {
-  @IsString() name: string;
-  @IsOptional() @IsInt() @Min(1) capacity?: number;
+  @IsString()
+  @MinLength(2)
+  @MaxLength(60)
+  name: string;
+
+  @IsInt()
+  @IsPositive()
+  @Min(1)
+  capacity: number;
 }

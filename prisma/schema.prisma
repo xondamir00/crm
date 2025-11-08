@@ -23,6 +23,15 @@ enum DayOfWeek {
   SAT
   SUN
 }
+enum DaysPattern {
+  ODD   // Du/Cho/Ju
+  EVEN  // Se/Pa/Sha
+}
+enum EnrollmentStatus {
+  ACTIVE
+  PAUSED
+  LEFT
+}
 
 model User {
   id               String   @id @default(cuid())
@@ -34,12 +43,10 @@ model User {
   isActive         Boolean  @default(true)
   refreshTokenHash String?
   createdAt        DateTime @default(now())
-
   // 🔁 back-relations (har biri optional — 1:1)
   teacherProfile TeacherProfile?
   studentProfile StudentProfile?
   managerProfile ManagerProfile?
-
   @@index([role])
   @@index([isActive])
 }
@@ -48,7 +55,6 @@ model ManagerProfile {
   id     String @id @default(cuid())
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
   photoUrl      String?
   monthlySalary Decimal @db.Decimal(10, 2)
 }
@@ -57,56 +63,63 @@ model TeacherProfile {
   id     String @id @default(cuid())
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
   photoUrl      String?
   monthlySalary Decimal? @db.Decimal(10, 2)
-  percentShare  Decimal? @db.Decimal(5, 2) // 0..100
+  percentShare  Decimal? @db.Decimal(5, 2) 
 }
 
 model StudentProfile {
   id     String @id @default(cuid())
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
   dateOfBirth DateTime?
   startDate   DateTime?
-
-  groupId String?
-  group   Group?  @relation(fields: [groupId], references: [id])
+  enrollments Enrollment[]
 }
-
 model Room {
-  id        String   @id @default(cuid())
+  id        String   @id @default(uuid())
   name      String   @unique
-  location  String?
-  capacity  Int? @default(10)
+  capacity  Int
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
-
+  updatedAt DateTime @updatedAt
   groups Group[]
 }
 
+
 model Group {
-  id        String   @id @default(cuid())
-  name      String
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  roomId    String?
-  room      Room?    @relation(fields: [roomId], references: [id])
-  capacity  Int
-  students  StudentProfile[]
-  schedule  GroupSchedule[]
+  id             String      @id @default(uuid())
+  name           String
+  capacity       Int
+  daysPattern    DaysPattern
+  startMinutes   Int 
+  endMinutes     Int
+  monthlyFee     Int          @default(0)
+  isActive       Boolean      @default(true)
+  roomId         String?
+  room           Room?        @relation(fields: [roomId], references: [id])
+  deactivatedAt  DateTime?
+  deactivatedBy  String?
+  deactivateReason String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  enrollments Enrollment[]
+  @@index([roomId, daysPattern, isActive])
+  @@unique([name, isActive])
 }
 
+model Enrollment {
+  id         String            @id @default(uuid())
+  studentId  String
+  groupId    String
+  joinDate   DateTime
+  leaveDate  DateTime?
+  status     EnrollmentStatus  @default(ACTIVE)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
 
-model GroupSchedule {
-  id        String    @id @default(cuid())
-  day       DayOfWeek
-  startTime String // "HH:mm"
-  endTime   String // "HH:mm"
-  groupId   String
-  group     Group     @relation(fields: [groupId], references: [id])
-  createdAt DateTime  @default(now())
+  student    StudentProfile    @relation(fields: [studentId], references: [id])
+  group      Group             @relation(fields: [groupId], references: [id])
 
-  @@unique([groupId, day])
+  @@index([studentId, groupId])
 }
