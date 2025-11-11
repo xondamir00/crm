@@ -12,9 +12,6 @@ import {
   safeToDate,
 } from '../helpers/date-time.helpers';
 
-/**
- * Mavjudlik tekshiruvlari
- */
 export async function assertTeacherExists(
   prisma: PrismaClient,
   teacherId: string,
@@ -36,11 +33,6 @@ export async function assertGroupExists(prisma: PrismaClient, groupId: string) {
     throw new BadRequestException('Guruh arxivda (isActive=false)');
 }
 
-/**
- * Effektiv jadvalni hisoblash:
- *  - inherit=true bo‘lsa: guruh jadvali
- *  - inherit=false bo‘lsa: override (majburiy) + validatsiya
- */
 export function resolveEffectiveSchedule(
   inheritSchedule: boolean,
   group: { daysPattern: DaysPattern; startMinutes: number; endMinutes: number },
@@ -64,7 +56,7 @@ export function resolveEffectiveSchedule(
     !override?.endTimeOverride
   ) {
     throw new BadRequestException(
-      'inheritSchedule=false bo‘lsa, daysPatternOverride, startTimeOverride va endTimeOverride majburiy',
+      'inheritSchedule=false bo`lsa, daysPatternOverride, startTimeOverride va endTimeOverride majburiy',
     );
   }
 
@@ -72,7 +64,7 @@ export function resolveEffectiveSchedule(
   const endMinutes = hhmmToMinutes(override.endTimeOverride);
   if (startMinutes >= endMinutes)
     throw new BadRequestException(
-      'startTimeOverride < endTimeOverride bo‘lishi kerak',
+      'startTimeOverride < endTimeOverride bo`lishi kerak',
     );
 
   return {
@@ -82,11 +74,6 @@ export function resolveEffectiveSchedule(
   };
 }
 
-/**
- * O‘qituvchi darajasida jadval to‘qnashuvini tekshiradi.
- *  - teacherId bo‘yicha ACTIVE assignment’larni olib,
- *  - period va vaqt overlap bor-yo‘qligini tekshiradi
- */
 export async function assertNoTeacherScheduleConflict(
   prisma: PrismaClient,
   teacherId: string,
@@ -99,7 +86,6 @@ export async function assertNoTeacherScheduleConflict(
       id: excludeId ? { not: excludeId } : undefined,
       teacherId,
       isActive: true,
-      // Sana bo‘yicha taxminiy overlap filter (DB-friendly)
       AND: [
         { fromDate: { lte: period.to ?? FAR_FUTURE } },
         { OR: [{ toDate: null }, { toDate: { gte: period.from } }] },
@@ -143,14 +129,10 @@ export async function assertNoTeacherScheduleConflict(
   });
 
   if (hit) {
-    throw new ConflictException('O‘qituvchi jadvali bilan to‘qnashuv mavjud');
+    throw new ConflictException('O`qituvchi jadvali bilan to`qnashuv mavjud');
   }
 }
 
-/**
- * Bitta guruhda LEAD o‘qituvchi unikalligi:
- *  - LEAD roli bo‘lsa, shu guruh/vaqt kesimida boshqa LEAD yo‘qligini tekshiradi
- */
 export async function assertLeadUniqueInsideGroup(
   prisma: PrismaClient,
   groupId: string,
@@ -214,9 +196,6 @@ export async function assertLeadUniqueInsideGroup(
   }
 }
 
-/**
- * Kiritilgan periodni validatsiya qilish (service ichida chaqirish uchun qulay)
- */
 export function validateAndNormalizePeriod(
   fromDate: string | Date,
   toDate?: string | Date | null,
@@ -224,6 +203,6 @@ export function validateAndNormalizePeriod(
   const from = safeToDate(fromDate)!;
   const to = safeToDate(toDate ?? null);
   if (to && from > to)
-    throw new BadRequestException('fromDate ≤ toDate bo‘lishi kerak');
+    throw new BadRequestException('fromDate ≤ toDate bo`lishi kerak');
   return { from, to };
 }
