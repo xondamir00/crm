@@ -11,6 +11,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import { Role } from '@prisma/client';
 import { PrismaService } from 'prisma/prisma.service';
+import * as argon2 from 'argon2';
 
 @Injectable()
 export class StudentsService {
@@ -36,7 +37,7 @@ export class StudentsService {
     const phone = normalizePhone(dto.phone);
     await assertPhoneUniqueIfProvided(this.prisma, phone);
 
-    const passwordHash = await bcrypt.hash(dto.password!, 10);
+    const passwordHash = await argon2.hash(dto.password!);
 
     const created = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateTeacherDto } from './dto/create-teacher.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
 import { QueryTeacherDto } from './dto/query-teacher.dto';
@@ -14,6 +18,8 @@ import * as bcrypt from 'bcrypt';
 import { Role } from '@prisma/client';
 import { PrismaService } from 'prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import * as argon2 from 'argon2';
+import { dateOnlyUTC } from 'src/attendance/utils/schedule.util';
 
 @Injectable()
 export class TeachersService {
@@ -47,7 +53,7 @@ export class TeachersService {
 
     const phone = normalizePhone(dto.phone);
     await assertPhoneUniqueIfProvided(this.prisma, phone);
-    const passwordHash = await bcrypt.hash(dto.password!, 10);
+    const passwordHash = await argon2.hash(dto.password!);
 
     const created = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -121,6 +127,64 @@ export class TeachersService {
     };
   }
 
+  async findMyGroups(currentUserId: string) {
+    const today = dateOnlyUTC(new Date());
+
+    const tas = await this.prisma.teachingAssignment.findMany({
+      where: {
+        teacher: { userId: currentUserId },
+        isActive: true,
+        fromDate: { lte: today },
+        OR: [{ toDate: null }, { toDate: { gte: today } }],
+        group: { isActive: true },
+      },
+      include: {
+        group: {
+          include: {
+            room: true,
+          },
+        },
+      },
+      orderBy: { fromDate: 'asc' },
+    });
+
+    const seen = new Set<string>();
+    const result: any[] = [];
+
+    for (const ta of tas) {
+      if (seen.has(ta.groupId)) continue;
+      seen.add(ta.groupId);
+
+      const g = ta.group;
+
+      result.push({
+        groupId: g.id,
+        groupName: g.name,
+        daysPattern: g.daysPattern,
+        startTime: this.minToHHMM(g.startMinutes),
+        endTime: this.minToHHMM(g.endMinutes),
+        room: g.room
+          ? {
+              id: g.room.id,
+              name: g.room.name,
+              capacity: g.room.capacity,
+            }
+          : null,
+        assignmentId: ta.id,
+        role: ta.role,
+      });
+    }
+
+    return result;
+  }
+
+  private minToHHMM(m: number) {
+    const h = Math.floor(m / 60)
+      .toString()
+      .padStart(2, '0');
+    const mm = (m % 60).toString().padStart(2, '0');
+    return `${h}:${mm}`;
+  }
   async findOne(id: string) {
     const row = await this.prisma.teacherProfile.findUnique({
       where: { id },

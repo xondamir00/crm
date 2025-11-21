@@ -46,6 +46,13 @@ export class GroupsController {
     return this.groupsService.getStats(id);
   }
 
+  @Get(':id/students')
+  @Roles(Role.TEACHER)
+  @UseGuards(JwtAuthGuard)
+  getStudents(@Param('id') id: string) {
+    return this.groupsService.getGroupStudents(id);
+  }
+
   @Patch(':id')
   @Roles(Role.ADMIN, Role.MANAGER)
   update(@Param('id') id: string, @Body() dto: UpdateGroupDto) {

@@ -173,6 +173,44 @@ export class GroupsService {
 
     return this.toView(updated);
   }
+  async getGroupStudents(groupId: string) {
+    const group = await this.prisma.group.findUnique({
+      where: { id: groupId },
+      select: { id: true, name: true, isActive: true },
+    });
+    if (!group) throw new NotFoundException('Guruh topilmadi');
+    if (!group.isActive) throw new NotFoundException('Guruh arxivda');
+
+    const enrollments = await this.prisma.enrollment.findMany({
+      where: {
+        groupId,
+        status: 'ACTIVE',
+      },
+      include: {
+        student: {
+          include: {
+            user: true,
+          },
+        },
+      },
+      orderBy: { joinDate: 'asc' },
+    });
+
+    return {
+      group: {
+        id: group.id,
+        name: group.name,
+      },
+      students: enrollments.map((e) => ({
+        enrollmentId: e.id,
+        studentId: e.student.id,
+        userId: e.student.userId,
+        fullName: `${e.student.user.firstName} ${e.student.user.lastName}`,
+        phone: e.student.user.phone,
+        joinDate: e.joinDate,
+      })),
+    };
+  }
 
   async softDelete(id: string, reason?: string) {
     const g = await this.prisma.group.findUnique({ where: { id } });

@@ -74,7 +74,6 @@ export class AttendanceService {
         note: dto.note,
       },
       update: {},
-      include: { attendance: true },
     });
 
     const activeEnrolls = await this.prisma.enrollment.findMany({
@@ -87,26 +86,55 @@ export class AttendanceService {
       select: { studentId: true },
     });
 
-    const existing = new Set(sheet.attendance.map((a) => a.studentId));
-    const toCreate = activeEnrolls.filter((e) => !existing.has(e.studentId));
+    const existing = await this.prisma.attendance.findMany({
+      where: { sheetId: sheet.id },
+      select: { studentId: true },
+    });
+    const existingSet = new Set(existing.map((a) => a.studentId));
+
+    const toCreate = activeEnrolls.filter((e) => !existingSet.has(e.studentId));
 
     if (toCreate.length) {
       await this.prisma.attendance.createMany({
         data: toCreate.map((e) => ({
           sheetId: sheet.id,
           studentId: e.studentId,
-          status: AttendanceStatus.ABSENT,
+          status: 'ABSENT',
         })),
         skipDuplicates: true,
       });
     }
 
-    const fresh = await this.prisma.attendanceSheet.findUnique({
-      where: { groupId_date: { groupId: group.id, date } },
-      include: { attendance: true },
+    const fresh = await this.prisma.attendanceSheet.findUniqueOrThrow({
+      where: { id: sheet.id },
+      include: {
+        attendance: {
+          include: {
+            student: {
+              include: { user: true },
+            },
+          },
+        },
+      },
     });
 
-    return this.toView(fresh);
+    return {
+      id: fresh.id,
+      groupId: fresh.groupId,
+      date: fresh.date,
+      startTime: this.minToHHMM(fresh.startMinutes),
+      endTime: this.minToHHMM(fresh.endMinutes),
+      status: fresh.status,
+      teacherAssignId: fresh.teacherAssignId,
+      note: fresh.note,
+      students: fresh.attendance.map((a) => ({
+        studentId: a.studentId,
+        fullName: `${a.student.user.firstName} ${a.student.user.lastName}`,
+        phone: a.student.user.phone,
+        status: a.status,
+        note: a.note ?? null,
+      })),
+    };
   }
 
   async mark(sheetId: string, dto: MarkAttendanceDto, currentUserId: string) {
