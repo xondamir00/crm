@@ -36,6 +36,13 @@ export class TeachersController {
     return this.teachersService.findAll(q);
   }
 
+  @Get('my-groups')
+  @Roles(Role.TEACHER)
+  getMyGroups(@Req() req: any) {
+    const userId = req.user.sub;
+    return this.teachersService.findMyGroups(userId);
+  }
+
   @Get(':id')
   @Roles(Role.ADMIN, Role.MANAGER)
   findOne(@Param('id') id: string) {
@@ -46,13 +53,6 @@ export class TeachersController {
   @Roles(Role.ADMIN, Role.MANAGER)
   update(@Param('id') id: string, @Body() dto: UpdateTeacherDto) {
     return this.teachersService.update(id, dto);
-  }
-
-  @Get('my-groups')
-  @Roles(Role.TEACHER)
-  getMyGroups(@Req() req: any) {
-    const userId = req.user.sub;
-    return this.teachersService.findMyGroups(userId);
   }
 
   @Delete(':id')

@@ -181,20 +181,21 @@ model Enrollment {
 }
 
 model Attendance {
-  id         String           @id @default(uuid())
-  sheetId    String
-  studentId  String           
-  status     AttendanceStatus
-  markedBy   String?          
-  markedAt   DateTime?
-  note       String?
+  id        String           @id @default(uuid())
+  sheetId   String
+  studentId String
+  status    AttendanceStatus
+  markedBy  String?
+  markedAt  DateTime?
+  note      String?
 
-  sheet      AttendanceSheet  @relation(fields: [sheetId], references: [id])
-  student    StudentProfile   @relation(fields: [studentId], references: [id])
+  sheet   AttendanceSheet @relation(fields: [sheetId],   references: [id])
+  student StudentProfile  @relation(fields: [studentId], references: [id])
 
   @@unique([sheetId, studentId])
   @@index([studentId, status])
 }
+
 
 model AttendanceSheet {
   id            String       @id @default(uuid())

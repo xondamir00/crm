@@ -1,17 +1,25 @@
+// dto/mark-attendance.dto.ts
+import { AttendanceStatus } from '@prisma/client';
 import {
   IsArray,
+  ValidateNested,
+  IsBoolean,
+  IsString,
   IsEnum,
   IsOptional,
-  IsString,
-  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export class MarkItemDto {
-  @IsString() studentId: string;
-  @IsEnum(['PRESENT', 'ABSENT', 'LATE', 'EXCUSED'] as const)
-  status: 'PRESENT' | 'ABSENT' | 'LATE' | 'EXCUSED';
-  @IsOptional() @IsString() note?: string;
+class MarkItemDto {
+  @IsString()
+  studentId: string;
+
+  @IsEnum(AttendanceStatus)
+  status: AttendanceStatus;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 export class MarkAttendanceDto {
@@ -19,5 +27,7 @@ export class MarkAttendanceDto {
   @ValidateNested({ each: true })
   @Type(() => MarkItemDto)
   items: MarkItemDto[];
-  @IsOptional() lock?: boolean; // true bo‘lsa varaqni LOCKED qiladi
+
+  @IsBoolean()
+  lock: boolean;
 }

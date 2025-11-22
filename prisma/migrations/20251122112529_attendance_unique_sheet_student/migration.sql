@@ -1,0 +1,5 @@
+-- DropIndex
+DROP INDEX "public"."Attendance_studentId_idx";
+
+-- CreateIndex
+CREATE INDEX "Attendance_studentId_status_idx" ON "Attendance"("studentId", "status");

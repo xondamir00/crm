@@ -10,7 +10,6 @@ import {
   assertPaySchemeXor,
   assertPercentRange,
   assertPhoneUniqueIfProvided,
-  assertUserExists,
   ensureCreateVariantValid,
   normalizePhone,
 } from './policies/teacher.policies';

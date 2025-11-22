@@ -15,7 +15,7 @@ async function bootstrap() {
     }),
   );
   app.useGlobalFilters(new HttpExceptionFilter());
-
+  app.useLogger(['log', 'error', 'warn', 'debug', 'verbose']);
   const logger = new AppLogger();
   app.useLogger(logger);
 

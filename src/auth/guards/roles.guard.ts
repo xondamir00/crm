@@ -5,41 +5,47 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ROLES_KEY } from '../decorator/roles.decorator';
 import { Role } from '@prisma/client';
+import { ROLES_KEY } from '../decorator/roles.decorator';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(ctx: ExecutionContext): boolean {
-    const required = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
+    // Handler (method) → class bo‘yicha @Roles metadata’ni o‘qiymiz
+    const required = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
       ctx.getHandler(),
       ctx.getClass(),
     ]);
 
-    // Agar route’da @Roles yo‘q bo‘lsa – hammani o‘tkazamiz
+    // Agar route’da @Roles umuman bo‘lmasa – hammani o‘tkazamiz
     if (!required || required.length === 0) {
       return true;
     }
 
     const req = ctx.switchToHttp().getRequest();
-    const user = req.user as { role?: string; isActive?: boolean };
+    const user = req.user as { role?: Role; isActive?: boolean; sub?: string };
 
-    console.log('ROLES GUARD >>>', { required, user });
+    console.log('ROLES GUARD >>>', {
+      handler: ctx.getHandler().name,
+      required,
+      user,
+    });
 
     if (!user) {
       throw new ForbiddenException('User JWT dan kelmadi');
     }
 
-    if (!user.isActive) {
+    if (user.isActive === false) {
       throw new ForbiddenException('Foydalanuvchi bloklangan');
     }
 
-    const allowedRoles = required; // bu Role[]
-    const userRole = user.role as Role;
+    // Masalan: 'TEACHER'
+    const userRole = user.role;
 
-    if (!allowedRoles.includes(userRole)) {
+    // required: [Role.TEACHER] yoki [Role.ADMIN, Role.MANAGER]
+    if (!required.includes(userRole as Role)) {
       throw new ForbiddenException(`Ruxsat berilmagan rol: ${userRole}`);
     }
 

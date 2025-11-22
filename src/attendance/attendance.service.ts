@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -138,33 +139,50 @@ export class AttendanceService {
   }
 
   async mark(sheetId: string, dto: MarkAttendanceDto, currentUserId: string) {
-    const sheet = await this.prisma.attendanceSheet.findUnique({
-      where: { id: sheetId },
-      select: { id: true, status: true },
-    });
-    if (!sheet) throw new NotFoundException('Varaq topilmadi');
-    if (sheet.status === 'LOCKED')
-      throw new BadRequestException('Varaq allaqachon yopilgan');
+    return this.prisma.$transaction(async (tx) => {
+      const sheet = await tx.attendanceSheet.findUnique({
+        where: { id: sheetId },
+        select: { id: true, status: true, groupId: true },
+      });
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const it of dto.items) {
+      if (!sheet) {
+        throw new NotFoundException('Sheet topilmadi');
+      }
+
+      if (sheet.status === SheetStatus.LOCKED) {
+        throw new BadRequestException('Bu jadval allaqachon lock qilingan');
+      }
+
+      const teacher = await tx.teacherProfile.findUnique({
+        where: { userId: currentUserId },
+        select: { id: true },
+      });
+
+      if (!teacher) {
+        throw new ForbiddenException('Faqat teacher davomat belgilashi mumkin');
+      }
+
+      for (const item of dto.items) {
         await tx.attendance.upsert({
           where: {
-            sheetId_studentId: { sheetId: sheetId, studentId: it.studentId },
+            sheetId_studentId: {
+              sheetId,
+              studentId: item.studentId,
+            },
+          },
+          update: {
+            status: item.status,
+            note: item.note ?? null,
+            markedBy: teacher.id,
+            markedAt: new Date(),
           },
           create: {
             sheetId,
-            studentId: it.studentId,
-            status: it.status as AttendanceStatus,
-            markedBy: currentUserId,
+            studentId: item.studentId,
+            status: item.status,
+            note: item.note ?? null,
+            markedBy: teacher.id,
             markedAt: new Date(),
-            note: it.note,
-          },
-          update: {
-            status: it.status as AttendanceStatus,
-            markedBy: currentUserId,
-            markedAt: new Date(),
-            note: it.note,
           },
         });
       }
@@ -172,18 +190,13 @@ export class AttendanceService {
       if (dto.lock) {
         await tx.attendanceSheet.update({
           where: { id: sheetId },
-          data: { status: 'LOCKED' },
+          data: { status: SheetStatus.LOCKED },
         });
       }
-    });
 
-    const fresh = await this.prisma.attendanceSheet.findUnique({
-      where: { id: sheetId },
-      include: { attendance: true },
+      return { success: true };
     });
-    return this.toView(fresh);
   }
-
   async getSheet(sheetId: string) {
     const sheet = await this.prisma.attendanceSheet.findUnique({
       where: { id: sheetId },
