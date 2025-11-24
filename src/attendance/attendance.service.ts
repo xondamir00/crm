@@ -1,245 +1,215 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { OpenSheetDto } from './dto/open-sheet.dto';
-import { MarkAttendanceDto } from './dto/mark-attendance.dto';
-import { QuerySheetDto } from './dto/query-sheet.dto';
-import { AttendanceStatus, SheetStatus } from '@prisma/client';
+// src/attendance/attendance.service.ts
+
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { AttendanceStatus, AttendanceSheetStatus } from '@prisma/client';
+import { GetGroupSheetDto } from './dto/get-group-sheet.dto';
+import { BulkUpdateAttendanceDto } from './dto/bulk-update-attendance.dto';
+import { TeacherAttendancePolicy } from './policies/teacher-attendance.policy';
 import { PrismaService } from 'prisma/prisma.service';
-import {
-  dateOnlyUTC,
-  ensureDateMatchesGroupPattern,
-} from './utils/schedule.util';
 
 @Injectable()
 export class AttendanceService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly teacherPolicy: TeacherAttendancePolicy,
+  ) {}
 
-  private toView(sheet: any) {
-    return {
-      id: sheet.id,
-      groupId: sheet.groupId,
-      date: sheet.date,
-      startTime: this.minToHHMM(sheet.startMinutes),
-      endTime: this.minToHHMM(sheet.endMinutes),
-      status: sheet.status,
-      teacherAssignId: sheet.teacherAssignId ?? null,
-      note: sheet.note ?? null,
-      students:
-        sheet.attendance?.map((a) => ({
-          studentId: a.studentId,
-          status: a.status,
-          note: a.note ?? null,
-        })) ?? [],
-    };
+  private normalizeDate(dateStr: string): Date {
+    const d = new Date(dateStr);
+    d.setHours(0, 0, 0, 0);
+    return d;
   }
 
-  private minToHHMM(m: number) {
-    const h = Math.floor(m / 60)
-      .toString()
-      .padStart(2, '0');
-    const mm = (m % 60).toString().padStart(2, '0');
-    return `${h}:${mm}`;
-  }
+  async getOrCreateGroupSheetForTeacher(params: {
+    teacherUserId: string;
+    groupId: string;
+    dto: GetGroupSheetDto;
+  }) {
+    const { teacherUserId, groupId, dto } = params;
 
-  async openSheet(dto: OpenSheetDto) {
-    const group = await this.prisma.group.findUnique({
-      where: { id: dto.groupId },
-      select: {
-        id: true,
-        daysPattern: true,
-        startMinutes: true,
-        endMinutes: true,
-        isActive: true,
+    const group = await this.teacherPolicy.ensureTeacherHasAccessToGroupOrThrow(
+      {
+        teacherUserId,
+        groupId,
       },
-    });
-    if (!group) throw new NotFoundException('Guruh topilmadi');
-    if (!group.isActive) throw new BadRequestException('Guruh arxivda');
+    );
 
-    const date = dateOnlyUTC(new Date(dto.date));
-    if (!ensureDateMatchesGroupPattern(date, group.daysPattern)) {
-      throw new BadRequestException('Bu sana guruh jadvaliga to‘g‘ri kelmaydi');
-    }
+    const date = this.normalizeDate(dto.date);
+    const lesson = dto.lesson ? Number(dto.lesson) : null;
 
-    const sheet = await this.prisma.attendanceSheet.upsert({
-      where: { groupId_date: { groupId: group.id, date } },
-      create: {
-        groupId: group.id,
-        date,
-        startMinutes: group.startMinutes,
-        endMinutes: group.endMinutes,
-        teacherAssignId: dto.teacherAssignId,
-        note: dto.note,
-      },
-      update: {},
-    });
-
-    const activeEnrolls = await this.prisma.enrollment.findMany({
+    let sheet = await this.prisma.attendanceSheet.findFirst({
       where: {
-        groupId: group.id,
-        status: 'ACTIVE',
-        joinDate: { lte: date },
-        OR: [{ leaveDate: null }, { leaveDate: { gte: date } }],
+        groupId,
+        date,
+        lesson: lesson ?? undefined,
       },
-      select: { studentId: true },
-    });
-
-    const existing = await this.prisma.attendance.findMany({
-      where: { sheetId: sheet.id },
-      select: { studentId: true },
-    });
-    const existingSet = new Set(existing.map((a) => a.studentId));
-
-    const toCreate = activeEnrolls.filter((e) => !existingSet.has(e.studentId));
-
-    if (toCreate.length) {
-      await this.prisma.attendance.createMany({
-        data: toCreate.map((e) => ({
-          sheetId: sheet.id,
-          studentId: e.studentId,
-          status: 'ABSENT',
-        })),
-        skipDuplicates: true,
-      });
-    }
-
-    const fresh = await this.prisma.attendanceSheet.findUniqueOrThrow({
-      where: { id: sheet.id },
       include: {
-        attendance: {
+        records: {
           include: {
             student: {
-              include: { user: true },
+              include: {
+                user: true,
+              },
             },
+          },
+        },
+        group: {
+          include: {
+            room: true,
           },
         },
       },
     });
 
+    if (!sheet) {
+      sheet = await this.prisma.attendanceSheet.create({
+        data: {
+          groupId,
+          date,
+          lesson,
+          status: AttendanceSheetStatus.OPEN,
+          createdById: teacherUserId,
+        },
+        include: {
+          records: {
+            include: {
+              student: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          group: {
+            include: {
+              room: true,
+            },
+          },
+        },
+      });
+    }
+
+    const enrollments = await this.teacherPolicy.getActiveEnrollmentsForDate({
+      groupId,
+      date,
+    });
+
+    const existingStudentIds = new Set(sheet.records.map((r) => r.studentId));
+
+    const missing = enrollments.filter(
+      (e) => !existingStudentIds.has(e.studentId),
+    );
+
+    if (missing.length > 0) {
+      await this.prisma.attendanceRecord.createMany({
+        data: missing.map((e) => ({
+          sheetId: sheet!.id,
+          studentId: e.studentId,
+          status: AttendanceStatus.UNKNOWN,
+        })),
+      });
+
+      sheet = await this.prisma.attendanceSheet.findUnique({
+        where: { id: sheet.id },
+        include: {
+          records: {
+            include: {
+              student: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          group: {
+            include: {
+              room: true,
+            },
+          },
+        },
+      });
+    }
+
     return {
-      id: fresh.id,
-      groupId: fresh.groupId,
-      date: fresh.date,
-      startTime: this.minToHHMM(fresh.startMinutes),
-      endTime: this.minToHHMM(fresh.endMinutes),
-      status: fresh.status,
-      teacherAssignId: fresh.teacherAssignId,
-      note: fresh.note,
-      students: fresh.attendance.map((a) => ({
-        studentId: a.studentId,
-        fullName: `${a.student.user.firstName} ${a.student.user.lastName}`,
-        phone: a.student.user.phone,
-        status: a.status,
-        note: a.note ?? null,
+      sheetId: sheet!.id,
+      group: {
+        id: group.id,
+        name: group.name,
+        daysPattern: group.daysPattern,
+        startMinutes: group.startMinutes,
+        endMinutes: group.endMinutes,
+        room: group.room
+          ? {
+              id: group.room.id,
+              name: group.room.name,
+              capacity: group.room.capacity,
+            }
+          : null,
+      },
+      date: sheet!.date.toISOString().slice(0, 10),
+      lesson: sheet!.lesson,
+      status: sheet!.status,
+      students: sheet!.records.map((r) => ({
+        studentId: r.studentId,
+        fullName: `${r.student.user.firstName} ${r.student.user.lastName}`,
+        status: r.status,
+        comment: r.comment,
       })),
     };
   }
 
-  async mark(sheetId: string, dto: MarkAttendanceDto, currentUserId: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const sheet = await tx.attendanceSheet.findUnique({
-        where: { id: sheetId },
-        select: { id: true, status: true, groupId: true },
-      });
+  async bulkUpdateSheetForTeacher(params: {
+    teacherUserId: string;
+    sheetId: string;
+    dto: BulkUpdateAttendanceDto;
+  }) {
+    const { teacherUserId, sheetId, dto } = params;
 
-      if (!sheet) {
-        throw new NotFoundException('Sheet topilmadi');
-      }
+    const sheet = await this.prisma.attendanceSheet.findUnique({
+      where: { id: sheetId },
+    });
 
-      if (sheet.status === SheetStatus.LOCKED) {
-        throw new BadRequestException('Bu jadval allaqachon lock qilingan');
-      }
+    if (!sheet) {
+      throw new NotFoundException('Attendance sahifasi topilmadi');
+    }
 
-      const teacher = await tx.teacherProfile.findUnique({
-        where: { userId: currentUserId },
-        select: { id: true },
-      });
+    await this.teacherPolicy.ensureTeacherHasAccessToGroupOrThrow({
+      teacherUserId,
+      groupId: sheet.groupId,
+    });
 
-      if (!teacher) {
-        throw new ForbiddenException('Faqat teacher davomat belgilashi mumkin');
-      }
+    this.teacherPolicy.ensureSheetIsOpenOrThrow(sheet);
 
-      for (const item of dto.items) {
-        await tx.attendance.upsert({
+    const items = dto.items ?? [];
+    if (items.length === 0) {
+      return { success: true };
+    }
+
+    await this.prisma.$transaction(
+      items.map((item) =>
+        this.prisma.attendanceRecord.upsert({
           where: {
             sheetId_studentId: {
               sheetId,
               studentId: item.studentId,
             },
           },
-          update: {
-            status: item.status,
-            note: item.note ?? null,
-            markedBy: teacher.id,
-            markedAt: new Date(),
-          },
           create: {
             sheetId,
             studentId: item.studentId,
-            status: item.status,
-            note: item.note ?? null,
-            markedBy: teacher.id,
-            markedAt: new Date(),
+            status: item.status ?? AttendanceStatus.UNKNOWN,
+            comment: item.comment ?? null,
+            updatedById: teacherUserId,
           },
-        });
-      }
+          update: {
+            status: item.status ?? AttendanceStatus.UNKNOWN,
+            comment: item.comment ?? null,
+            updatedById: teacherUserId,
+          },
+        }),
+      ),
+    );
 
-      if (dto.lock) {
-        await tx.attendanceSheet.update({
-          where: { id: sheetId },
-          data: { status: SheetStatus.LOCKED },
-        });
-      }
-
-      return { success: true };
-    });
-  }
-  async getSheet(sheetId: string) {
-    const sheet = await this.prisma.attendanceSheet.findUnique({
-      where: { id: sheetId },
-      include: {
-        attendance: { include: { student: { include: { user: true } } } },
-      },
-    });
-    if (!sheet) throw new NotFoundException('Varaq topilmadi');
-
-    return {
-      ...this.toView(sheet),
-      students: sheet.attendance.map((a) => ({
-        studentId: a.studentId,
-        fullName: `${a.student.user.firstName} ${a.student.user.lastName}`,
-        phone: a.student.user.phone,
-        status: a.status,
-        note: a.note ?? null,
-      })),
-    };
-  }
-
-  async listSheets(q: QuerySheetDto) {
-    const where: any = { groupId: q.groupId };
-    if (q.from || q.to) {
-      where.date = {
-        gte: q.from ? dateOnlyUTC(new Date(q.from)) : undefined,
-        lte: q.to ? dateOnlyUTC(new Date(q.to)) : undefined,
-      };
-    }
-    const rows = await this.prisma.attendanceSheet.findMany({
-      where,
-      orderBy: { date: 'desc' },
-      include: { attendance: true },
-    });
-
-    return rows.map((s) => ({
-      id: s.id,
-      date: s.date,
-      status: s.status,
-      present: s.attendance.filter((x) => x.status === 'PRESENT').length,
-      absent: s.attendance.filter((x) => x.status === 'ABSENT').length,
-      late: s.attendance.filter((x) => x.status === 'LATE').length,
-      excused: s.attendance.filter((x) => x.status === 'EXCUSED').length,
-    }));
+    return { success: true };
   }
 }

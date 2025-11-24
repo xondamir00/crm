@@ -39,15 +39,17 @@ enum EnrollmentStatus {
   LEFT
 }
 
-enum SheetStatus { 
+enum AttendanceSheetStatus { 
   OPEN 
   LOCKED 
 }
-enum AttendanceStatus { 
-  PRESENT //Darsda ishtirok etgan
-  ABSENT //Umuman kelmagan
-  LATE //Kechikib kelgan
-  EXCUSED //Uzrli sabab bilan kelmagan
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+  UNKNOWN
 }
 
 
@@ -65,6 +67,8 @@ model User {
   teacherProfile TeacherProfile?
   studentProfile StudentProfile?
   managerProfile ManagerProfile?
+  attendanceSheetsCreated  AttendanceSheet[]   @relation("AttendanceSheetCreatedBy")
+  attendanceRecordsUpdated AttendanceRecord[]  @relation("AttendanceRecordUpdatedBy")
   @@index([role])
   @@index([isActive])
 }
@@ -127,7 +131,7 @@ model StudentProfile {
   dateOfBirth DateTime?
   startDate   DateTime?
   enrollments Enrollment[]
-  attendance    Attendance[]
+  attendance    AttendanceRecord[]
 }
 model Room {
   id        String   @id @default(uuid())
@@ -179,40 +183,44 @@ model Enrollment {
 
   @@index([studentId, groupId])
 }
+model AttendanceSheet {
+  id          String              @id @default(cuid())
+  group       Group               @relation(fields: [groupId], references: [id])
+  groupId     String
+  date        DateTime
+  lesson      Int?
+  status      AttendanceSheetStatus @default(OPEN)
 
-model Attendance {
-  id        String           @id @default(uuid())
-  sheetId   String
-  studentId String
-  status    AttendanceStatus
-  markedBy  String?
-  markedAt  DateTime?
-  note      String?
+  createdBy   User?               @relation("AttendanceSheetCreatedBy", fields: [createdById], references: [id])
+  createdById String?
 
-  sheet   AttendanceSheet @relation(fields: [sheetId],   references: [id])
-  student StudentProfile  @relation(fields: [studentId], references: [id])
+  records     AttendanceRecord[]
 
-  @@unique([sheetId, studentId])
-  @@index([studentId, status])
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@unique([groupId, date, lesson]) // bitta guruh + sana + lesson uchun 1ta sheet
 }
 
 
-model AttendanceSheet {
-  id            String       @id @default(uuid())
-  groupId       String
-  date          DateTime     
-  startMinutes  Int          
-  endMinutes    Int
-  teacherAssignId String?    
-  status        SheetStatus  @default(OPEN)
-  note          String?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
 
-  group         Group    @relation(fields: [groupId], references: [id])
-  attendance    Attendance[]
+model AttendanceRecord {
+  id          String           @id @default(cuid())
+  sheet       AttendanceSheet  @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  sheetId     String
 
-  @@unique([groupId, date]) // bir guruh + bir kun = bitta varaq
-  @@index([date])
+  student     StudentProfile          @relation(fields: [studentId], references: [id])
+  studentId   String
+
+  status      AttendanceStatus @default(UNKNOWN)
+  comment     String?
+
+  updatedBy   User?            @relation("AttendanceRecordUpdatedBy", fields: [updatedById], references: [id])
+  updatedById String?
+
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([sheetId, studentId]) // bitta sahifada bitta student – bitta yozuv
 }

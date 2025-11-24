@@ -4,51 +4,47 @@ import {
   Get,
   Param,
   Patch,
-  Post,
   Query,
-  Req,
   UseGuards,
 } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
-import { OpenSheetDto } from './dto/open-sheet.dto';
-import { MarkAttendanceDto } from './dto/mark-attendance.dto';
-import { QuerySheetDto } from './dto/query-sheet.dto';
+import { GetGroupSheetDto } from './dto/get-group-sheet.dto';
+import { BulkUpdateAttendanceDto } from './dto/bulk-update-attendance.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { Roles } from 'src/auth/decorator/roles.decorator';
 import { Role } from '@prisma/client';
+import { GetUser } from 'src/auth/decorator/get-user.decorator';
 
-@Controller('attendance')
 @UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.TEACHER)
+@Controller('teacher/attendance')
 export class AttendanceController {
-  constructor(private readonly service: AttendanceService) {}
+  constructor(private readonly attendanceService: AttendanceService) {}
 
-  @Post('open-sheet')
-  @Roles(Role.TEACHER)
-  open(@Body() dto: OpenSheetDto) {
-    return this.service.openSheet(dto);
-  }
-
-  @Patch(':sheetId/mark')
-  @Roles(Role.TEACHER)
-  mark(
-    @Param('sheetId') sheetId: string,
-    @Body() dto: MarkAttendanceDto,
-    @Req() req: any,
+  @Get('group/:groupId')
+  async getGroupSheet(
+    @GetUser('sub') userId: string,
+    @Param('groupId') groupId: string,
+    @Query() query: GetGroupSheetDto,
   ) {
-    const userId = req.user?.sub as string;
-    return this.service.mark(sheetId, dto, userId);
+    return this.attendanceService.getOrCreateGroupSheetForTeacher({
+      teacherUserId: userId,
+      groupId,
+      dto: query,
+    });
   }
 
-  @Get('sheet/:sheetId')
-  @Roles(Role.TEACHER)
-  getOne(@Param('sheetId') sheetId: string) {
-    return this.service.getSheet(sheetId);
-  }
-
-  @Get('sheets')
-  @Roles(Role.TEACHER)
-  list(@Query() q: QuerySheetDto) {
-    return this.service.listSheets(q);
+  @Patch('sheet/:sheetId')
+  async updateSheet(
+    @GetUser('sub') userId: string,
+    @Param('sheetId') sheetId: string,
+    @Body() body: BulkUpdateAttendanceDto,
+  ) {
+    return this.attendanceService.bulkUpdateSheetForTeacher({
+      teacherUserId: userId,
+      sheetId,
+      dto: body,
+    });
   }
 }

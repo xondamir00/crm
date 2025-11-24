@@ -1,16 +1,14 @@
-// dto/mark-attendance.dto.ts
-import { AttendanceStatus } from '@prisma/client';
 import {
   IsArray,
-  ValidateNested,
-  IsBoolean,
-  IsString,
   IsEnum,
   IsOptional,
+  IsString,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { AttendanceStatus } from '@prisma/client';
 
-class MarkItemDto {
+export class AttendanceItemDto {
   @IsString()
   studentId: string;
 
@@ -19,15 +17,12 @@ class MarkItemDto {
 
   @IsOptional()
   @IsString()
-  note?: string;
+  comment?: string;
 }
 
-export class MarkAttendanceDto {
+export class BulkUpdateAttendanceDto {
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => MarkItemDto)
-  items: MarkItemDto[];
-
-  @IsBoolean()
-  lock: boolean;
+  @Type(() => AttendanceItemDto)
+  items: AttendanceItemDto[];
 }
