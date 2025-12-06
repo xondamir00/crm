@@ -13,10 +13,14 @@ import {
   assertStudentExists,
 } from './policies/enrollment.policies';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinanceService } from 'src/finance/finance.service';
 
 @Injectable()
 export class EnrollmentsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly financeService: FinanceService,
+  ) {}
 
   // CREATE: studentni guruhga qo'shish
   async create(dto: CreateEnrollmentDto) {
@@ -28,19 +32,23 @@ export class EnrollmentsService {
     const joinDate = dto.joinDate ? new Date(dto.joinDate) : new Date();
 
     // Yaratish (transactionda)
-    const created = await this.prisma.$transaction(async (tx) => {
-      const enrollment = await tx.enrollment.create({
-        data: {
-          studentId: dto.studentId,
-          groupId: dto.groupId,
-          joinDate,
-          status: 'ACTIVE',
-        },
-      });
-      return enrollment;
+    const enrollment = await this.prisma.enrollment.create({
+      data: {
+        studentId: dto.studentId,
+        groupId: dto.groupId,
+        joinDate,
+        status: 'ACTIVE',
+      },
     });
 
-    return created;
+    // 🔥 YANGI CHAQRUV: Enroll ID emas, student + group + joinDate
+    await this.financeService.createInitialTuitionChargeForEnrollment({
+      studentId: enrollment.studentId,
+      groupId: enrollment.groupId,
+      joinDate: enrollment.joinDate,
+    });
+
+    return enrollment;
   }
 
   // LIST

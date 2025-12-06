@@ -13,10 +13,11 @@ enum Role {
   TEACHER
   STUDENT
 }
+
 enum TeacherRole {
-  LEAD  //Asosiy o‘qituvchi
-  ASSISTANT //Yordamchi
-  SUBSTITUTE //O‘rinbosar (vaqtinchalik)
+  LEAD // Asosiy o‘qituvchi
+  ASSISTANT // Yordamchi
+  SUBSTITUTE // O‘rinbosar (vaqtinchalik)
 }
 
 enum DayOfWeek {
@@ -28,9 +29,10 @@ enum DayOfWeek {
   SAT
   SUN
 }
+
 enum DaysPattern {
-  ODD   // Du/Cho/Ju
-  EVEN  // Se/Pa/Sha
+  ODD // Du/Cho/Ju
+  EVEN // Se/Pa/Sha
 }
 
 enum EnrollmentStatus {
@@ -39,9 +41,9 @@ enum EnrollmentStatus {
   LEFT
 }
 
-enum AttendanceSheetStatus { 
-  OPEN 
-  LOCKED 
+enum AttendanceSheetStatus {
+  OPEN
+  LOCKED
 }
 
 enum AttendanceStatus {
@@ -52,6 +54,38 @@ enum AttendanceStatus {
   UNKNOWN
 }
 
+//
+//  FINANCE ENUMS
+//
+enum PaymentMethod {
+  CASH // Naqd
+  CLICK // Click / online
+  BANK // Bank orqali (o‘tkazma / hisob-raqam)
+  CARD // Terminal / plastik karta
+  TRANSFER // Boshqa o‘tkazmalar (agar kerak bo‘lsa)
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum TuitionChargeStatus {
+  PENDING // Hali to‘liq yopilmagan
+  PARTIALLY_PAID // Qisman yopilgan
+  PAID // To‘liq yopilgan
+  CANCELLED // Bekor qilingan
+}
+
+enum ExpenseCategory {
+  RENT // Ijara
+  SALARY // Oylik maosh
+  UTILITIES // Kommunal (elektr, gaz, internet)
+  EQUIPMENT // Jihozlar, kompyuterlar
+  OTHER // Boshqa
+}
 
 model User {
   id               String   @id @default(cuid())
@@ -63,60 +97,67 @@ model User {
   isActive         Boolean  @default(true)
   refreshTokenHash String?
   createdAt        DateTime @default(now())
-  // 🔁 back-relations (har biri optional — 1:1)
+
+  // back-relations (har biri optional — 1:1)
   teacherProfile TeacherProfile?
   studentProfile StudentProfile?
   managerProfile ManagerProfile?
-  attendanceSheetsCreated  AttendanceSheet[]   @relation("AttendanceSheetCreatedBy")
-  attendanceRecordsUpdated AttendanceRecord[]  @relation("AttendanceRecordUpdatedBy")
+
+  attendanceSheetsCreated  AttendanceSheet[]  @relation("AttendanceSheetCreatedBy")
+  attendanceRecordsUpdated AttendanceRecord[] @relation("AttendanceRecordUpdatedBy")
+
+  //  Finance tarafdan:
+  paymentsRecorded Payment[] @relation("PaymentRecordedBy")
+  expensesRecorded Expense[] @relation("ExpenseRecordedBy")
+
   @@index([role])
   @@index([isActive])
 }
 
 model ManagerProfile {
-  id     String @id @default(cuid())
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String  @id @default(cuid())
+  userId        String  @unique
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   photoUrl      String?
   monthlySalary Decimal @db.Decimal(10, 2)
 }
 
 model TeacherProfile {
-  id     String @id @default(cuid())
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  photoUrl      String?
-  monthlySalary Decimal? @db.Decimal(10, 2)
-  percentShare  Decimal? @db.Decimal(5, 2) 
+  id                 String               @id @default(cuid())
+  userId             String               @unique
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  photoUrl           String?
+  monthlySalary      Decimal?             @db.Decimal(10, 2)
+  percentShare       Decimal?             @db.Decimal(5, 2)
   teachingAssignment TeachingAssignment[]
 }
 
 model TeachingAssignment {
-  id          String       @id @default(cuid())
-  teacherId   String
-  groupId     String
-  fromDate    DateTime
-  toDate      DateTime?
+  id        String    @id @default(cuid())
+  teacherId String
+  groupId   String
+  fromDate  DateTime
+  toDate    DateTime?
 
-  role        TeacherRole  @default(LEAD)
+  role TeacherRole @default(LEAD)
 
-  inheritSchedule Boolean  @default(true)
-  daysPatternOverride DaysPattern?
+  inheritSchedule      Boolean      @default(true)
+  daysPatternOverride  DaysPattern?
   startMinutesOverride Int?
   endMinutesOverride   Int?
 
-  isActive    Boolean     @default(true)
-  assignedBy  String?
-  note        String?
+  isActive   Boolean @default(true)
+  assignedBy String?
+  note       String?
 
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  deactivatedAt DateTime?
-  deactivatedBy String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deactivatedAt    DateTime?
+  deactivatedBy    String?
   deactivateReason String?
 
-  teacher     TeacherProfile @relation(fields: [teacherId], references: [id])
-  group       Group          @relation(fields: [groupId], references: [id])
+  teacher TeacherProfile @relation(fields: [teacherId], references: [id])
+  group   Group          @relation(fields: [groupId], references: [id])
 
   @@index([teacherId, isActive])
   @@index([groupId, isActive])
@@ -128,11 +169,18 @@ model StudentProfile {
   id     String @id @default(cuid())
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   dateOfBirth DateTime?
   startDate   DateTime?
+
   enrollments Enrollment[]
-  attendance    AttendanceRecord[]
+  attendance  AttendanceRecord[]
+
+  // Finance:
+  payments       Payment[]
+  tuitionCharges TuitionCharge[]
 }
+
 model Room {
   id        String   @id @default(cuid())
   name      String   @unique
@@ -140,87 +188,199 @@ model Room {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
   groups Group[]
-  
 }
 
-
 model Group {
-  id             String      @id @default(cuid())
-  name           String
-  capacity       Int
-  daysPattern    DaysPattern
-  startMinutes   Int 
-  endMinutes     Int
-  monthlyFee     Int          @default(0)
-  isActive       Boolean      @default(true)
-  roomId         String?
-  room           Room?        @relation(fields: [roomId], references: [id])
-  deactivatedAt  DateTime?
-  deactivatedBy  String?
+  id               String      @id @default(cuid())
+  name             String
+  capacity         Int
+  daysPattern      DaysPattern
+  startMinutes     Int
+  endMinutes       Int
+  monthlyFee       Int         @default(0)
+  isActive         Boolean     @default(true)
+  roomId           String?
+  room             Room?       @relation(fields: [roomId], references: [id])
+  deactivatedAt    DateTime?
+  deactivatedBy    String?
   deactivateReason String?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  enrollments Enrollment[]
-  sheet AttendanceSheet[]
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  enrollments        Enrollment[]
+  sheet              AttendanceSheet[]
   teachingAssignment TeachingAssignment[]
-  @@index([roomId, daysPattern, isActive])
+
+  //Finance:
+  tuitionCharges TuitionCharge[]
+  payments       Payment[]
+
   @@unique([name, isActive])
+  @@index([roomId, daysPattern, isActive])
 }
 
 model Enrollment {
-  id         String            @id @default(cuid())
-  studentId  String
-  groupId    String
-  joinDate   DateTime
-  leaveDate  DateTime?
-  status     EnrollmentStatus  @default(ACTIVE)
-  createdAt  DateTime          @default(now())
-  updatedAt  DateTime          @updatedAt
+  id        String           @id @default(cuid())
+  studentId String
+  groupId   String
+  joinDate  DateTime
+  leaveDate DateTime?
+  status    EnrollmentStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
 
-  student    StudentProfile    @relation(fields: [studentId], references: [id])
-  group      Group             @relation(fields: [groupId], references: [id])
+  student StudentProfile @relation(fields: [studentId], references: [id])
+  group   Group          @relation(fields: [groupId], references: [id])
 
   @@index([studentId, groupId])
 }
-model AttendanceSheet {
-  id          String              @id @default(cuid())
-  group       Group               @relation(fields: [groupId], references: [id])
-  groupId     String
-  date        DateTime
-  lesson      Int?
-  status      AttendanceSheetStatus @default(OPEN)
 
-  createdBy   User?               @relation("AttendanceSheetCreatedBy", fields: [createdById], references: [id])
+model AttendanceSheet {
+  id      String                @id @default(cuid())
+  group   Group                 @relation(fields: [groupId], references: [id])
+  groupId String
+  date    DateTime
+  lesson  Int?
+  status  AttendanceSheetStatus @default(OPEN)
+
+  createdBy   User?   @relation("AttendanceSheetCreatedBy", fields: [createdById], references: [id])
   createdById String?
 
-  records     AttendanceRecord[]
+  records AttendanceRecord[]
 
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([groupId, date, lesson]) // bitta guruh + sana + lesson uchun 1ta sheet
 }
 
-
-
-
 model AttendanceRecord {
-  id          String           @id @default(cuid())
-  sheet       AttendanceSheet  @relation(fields: [sheetId], references: [id], onDelete: Cascade)
-  sheetId     String
+  id      String          @id @default(cuid())
+  sheet   AttendanceSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+  sheetId String
 
-  student     StudentProfile          @relation(fields: [studentId], references: [id])
-  studentId   String
+  student   StudentProfile @relation(fields: [studentId], references: [id])
+  studentId String
 
-  status      AttendanceStatus @default(UNKNOWN)
-  comment     String?
+  status  AttendanceStatus @default(UNKNOWN)
+  comment String?
 
-  updatedBy   User?            @relation("AttendanceRecordUpdatedBy", fields: [updatedById], references: [id])
+  updatedBy   User?   @relation("AttendanceRecordUpdatedBy", fields: [updatedById], references: [id])
   updatedById String?
 
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([sheetId, studentId]) // bitta sahifada bitta student – bitta yozuv
+}
+
+//
+// FINANCE MODELLAR
+//
+
+// Har bir student+group+oy uchun hisob (full yoki pro-rata)
+model TuitionCharge {
+  id String @id @default(cuid())
+
+  studentId String
+  groupId   String
+
+  student StudentProfile @relation(fields: [studentId], references: [id])
+  group   Group          @relation(fields: [groupId], references: [id])
+
+  year  Int // masalan, 2025
+  month Int // 1..12
+
+  amountDue Decimal @db.Decimal(10, 2) // shu oy uchun hisoblangan summa
+
+  plannedLessons Int? // shu oyda rejalashtirilgan umumiy darslar (masalan 12)
+  chargedLessons Int? // student uchun hisoblangan darslar soni
+
+  status  TuitionChargeStatus @default(PENDING)
+  dueDate DateTime?
+  note    String?
+
+  allocations PaymentAllocation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([studentId, groupId, year, month])
+  @@index([studentId, year, month])
+  @@index([groupId, year, month])
+}
+
+// Student tomonidan keltirilgan to‘lov
+model Payment {
+  id String @id @default(cuid())
+
+  studentId String
+  groupId   String?
+
+  student StudentProfile @relation(fields: [studentId], references: [id])
+  group   Group?         @relation(fields: [groupId], references: [id])
+
+  amount Decimal @db.Decimal(10, 2)
+
+  method PaymentMethod
+  status PaymentStatus @default(COMPLETED)
+
+  paidAt    DateTime @default(now()) // to‘lov sanasi
+  reference String? // Click trans ID, kvitansiya va h.k.
+  comment   String?
+
+  recordedById String?
+  recordedBy   User?   @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+
+  allocations PaymentAllocation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId, paidAt])
+  @@index([groupId, paidAt])
+  @@index([method, paidAt])
+}
+
+// Payment ↔ TuitionCharge o‘rtasidagi bog‘lovchi jadval
+model PaymentAllocation {
+  id String @id @default(cuid())
+
+  paymentId String
+  chargeId  String
+
+  payment Payment       @relation(fields: [paymentId], references: [id])
+  charge  TuitionCharge @relation(fields: [chargeId], references: [id])
+
+  amount Decimal @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+
+  @@unique([paymentId, chargeId])
+  @@index([chargeId])
+}
+
+// Chiqimlar (ijara, oylik, kommunal va hokazo)
+model Expense {
+  id String @id @default(cuid())
+
+  title    String
+  category ExpenseCategory
+  amount   Decimal         @db.Decimal(10, 2)
+
+  method PaymentMethod // naqd, click, bank va h.k.
+  paidAt DateTime      @default(now())
+
+  recordedById String?
+  recordedBy   User?   @relation("ExpenseRecordedBy", fields: [recordedById], references: [id])
+
+  note String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category, paidAt])
+  @@index([method, paidAt])
 }
