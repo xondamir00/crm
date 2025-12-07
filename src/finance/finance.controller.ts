@@ -17,6 +17,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Role, PaymentMethod } from '@prisma/client';
 import { Request } from 'express';
 import { Roles } from 'src/auth/decorator/roles.decorator';
+import { ApplyDiscountDto } from './dto/apply-discount.dto';
 
 interface AuthRequest extends Request {
   user: {
@@ -43,11 +44,28 @@ export class FinanceController {
     const recordedById = req.user.userId;
     return this.financeService.createExpense(dto, recordedById);
   }
+  @Post('discount')
+  @Roles(Role.ADMIN, Role.MANAGER)
+  async applyDiscount(@Body() dto: ApplyDiscountDto) {
+    return this.financeService.applyDiscount(dto);
+  }
 
+  @Get('debtors')
+  @Roles(Role.ADMIN, Role.MANAGER)
+  async getDebtors(@Query('minDebt') minDebt?: string) {
+    const value = minDebt ? Number(minDebt) : 0;
+    return this.financeService.getDebtors(value);
+  }
   @Get('students/:id/summary')
   @Roles(Role.ADMIN, Role.MANAGER)
   async getStudentSummary(@Param('id') studentId: string) {
     return this.financeService.getStudentSummary(studentId);
+  }
+
+  @Get('balance')
+  @Roles(Role.ADMIN, Role.MANAGER)
+  async getGlobalBalance() {
+    return this.financeService.getGlobalBalance();
   }
 
   @Get('overview')

@@ -294,6 +294,7 @@ model TuitionCharge {
   month Int // 1..12
 
   amountDue Decimal @db.Decimal(10, 2) // shu oy uchun hisoblangan summa
+  discount  Decimal    @db.Decimal(10, 2) @default(0)
 
   plannedLessons Int? // shu oyda rejalashtirilgan umumiy darslar (masalan 12)
   chargedLessons Int? // student uchun hisoblangan darslar soni
@@ -303,6 +304,7 @@ model TuitionCharge {
   note    String?
 
   allocations PaymentAllocation[]
+  
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

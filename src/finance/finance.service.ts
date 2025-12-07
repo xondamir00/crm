@@ -1,5 +1,9 @@
 // src/finance/finance.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   PaymentStatus,
   TuitionChargeStatus,
@@ -12,6 +16,7 @@ import {
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { PrismaService } from 'prisma/prisma.service';
+import { ApplyDiscountDto } from './dto/apply-discount.dto';
 
 @Injectable()
 export class FinanceService {
@@ -149,7 +154,6 @@ export class FinanceService {
   // STUDENT FINANCE SUMMARY
   //
   async getStudentSummary(studentId: string) {
-    // Student mavjudligini tekshirish
     const student = await this.prisma.studentProfile.findUnique({
       where: { id: studentId },
     });
@@ -157,9 +161,7 @@ export class FinanceService {
       throw new NotFoundException('Student topilmadi');
     }
 
-    // Barcha active/cancel bo‘lmagan charge lar
-    const chargesAgg = await this.prisma.tuitionCharge.aggregate({
-      _sum: { amountDue: true },
+    const charges = await this.prisma.tuitionCharge.findMany({
       where: {
         studentId,
         status: {
@@ -172,9 +174,12 @@ export class FinanceService {
       },
     });
 
-    const totalCharges = chargesAgg._sum.amountDue?.toNumber() ?? 0;
+    const totalCharges = charges.reduce((sum, c) => {
+      const amount = c.amountDue.toNumber();
+      const discount = c.discount.toNumber();
+      return sum + (amount - discount);
+    }, 0);
 
-    // Allocation lar bo‘yicha jami to‘langan
     const allocationsAgg = await this.prisma.paymentAllocation.aggregate({
       _sum: { amount: true },
       where: {
@@ -192,10 +197,8 @@ export class FinanceService {
     });
 
     const totalPaid = allocationsAgg._sum.amount?.toNumber() ?? 0;
-
     const debt = totalCharges - totalPaid;
 
-    // Oxirgi 5 ta payment
     const lastPayments = await this.prisma.payment.findMany({
       where: { studentId },
       orderBy: { paidAt: 'desc' },
@@ -254,6 +257,49 @@ export class FinanceService {
       profit: totalIncome - totalExpense,
     };
   }
+  private calculateLessonsForMonth(
+    group: Group,
+    joinDate: Date,
+  ): { plannedLessons: number; chargedLessons: number } {
+    const daysPattern = group.daysPattern;
+
+    const year = joinDate.getFullYear();
+    const monthIndex = joinDate.getMonth(); // 0-11
+
+    const monthStart = new Date(year, monthIndex, 1);
+    const monthEnd = new Date(year, monthIndex + 1, 0);
+
+    // JS'da: Yakshanba=0, Dushanba=1, ... Shanba=6
+    const oddDays = [1, 3, 5]; // Du / Cho / Ju
+    const evenDays = [2, 4, 6]; // Se / Pa / Sha
+
+    const targetWeekdays = daysPattern === DaysPattern.ODD ? oddDays : evenDays;
+
+    let plannedLessons = 0;
+    let chargedLessons = 0;
+
+    for (
+      let d = new Date(monthStart.getTime());
+      d <= monthEnd;
+      d.setDate(d.getDate() + 1)
+    ) {
+      const weekday = d.getDay(); // 0–6
+
+      if (targetWeekdays.includes(weekday)) {
+        plannedLessons += 1;
+
+        if (d >= this.stripTime(joinDate)) {
+          chargedLessons += 1;
+        }
+      }
+    }
+
+    return { plannedLessons, chargedLessons };
+  }
+
+  private stripTime(date: Date): Date {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  }
 
   async createInitialTuitionChargeForEnrollment(params: {
     studentId: string;
@@ -283,7 +329,7 @@ export class FinanceService {
     }
 
     const year = joinDate.getFullYear();
-    const month = joinDate.getMonth() + 1; // 1..12
+    const month = joinDate.getMonth() + 1;
 
     const { plannedLessons, chargedLessons } = this.calculateLessonsForMonth(
       group,
@@ -304,17 +350,14 @@ export class FinanceService {
     const amountDue = new Prisma.Decimal(amountDueNumber);
 
     // Composite unique asosida upsert – bir oyga bitta hisob
+
     const charge = await this.prisma.tuitionCharge.upsert({
       where: {
-        studentId_groupId_year_month: {
-          studentId,
-          groupId,
-          year,
-          month,
-        },
+        studentId_groupId_year_month: { studentId, groupId, year, month },
       },
       update: {
         amountDue,
+        discount: new Prisma.Decimal(0),
         plannedLessons,
         chargedLessons,
       },
@@ -324,6 +367,7 @@ export class FinanceService {
         year,
         month,
         amountDue,
+        discount: new Prisma.Decimal(0),
         plannedLessons,
         chargedLessons,
       },
@@ -342,46 +386,165 @@ export class FinanceService {
     return charge;
   }
 
-  private calculateLessonsForMonth(
-    group: Group,
-    joinDate: Date,
-  ): { plannedLessons: number; chargedLessons: number } {
-    const daysPattern = group.daysPattern;
+  async getGlobalBalance() {
+    // 1) Barcha charge'lar bo‘yicha effective summa (amount - discount)
+    const charges = await this.prisma.tuitionCharge.findMany({});
+    const totalCharges = charges.reduce((sum, c) => {
+      const base = c.amountDue.toNumber();
+      const discount = c.discount.toNumber();
+      return sum + (base - discount);
+    }, 0);
 
-    const year = joinDate.getFullYear();
-    const monthIndex = joinDate.getMonth(); // 0-11
+    // 2) Jami to‘langan (allocation bo‘yicha)
+    const allocAgg = await this.prisma.paymentAllocation.aggregate({
+      _sum: { amount: true },
+    });
+    const totalAllocated = allocAgg._sum.amount?.toNumber() ?? 0;
 
-    const monthStart = new Date(year, monthIndex, 1);
-    const monthEnd = new Date(year, monthIndex + 1, 0);
+    const totalDebt = totalCharges - totalAllocated;
 
-    const oddDays = [1, 3, 5]; // Du/Cho/Ju
-    const evenDays = [2, 4, 6]; // Se/Pa/Sha
+    // 3) Naxt kirim (Payment jadvali bo‘yicha)
+    const incomeAgg = await this.prisma.payment.aggregate({
+      _sum: { amount: true },
+      where: { status: PaymentStatus.COMPLETED },
+    });
+    const totalIncome = incomeAgg._sum.amount?.toNumber() ?? 0;
 
-    const targetWeekdays = daysPattern === DaysPattern.ODD ? oddDays : evenDays;
+    // 4) Chiqimlar
+    const expenseAgg = await this.prisma.expense.aggregate({
+      _sum: { amount: true },
+    });
+    const totalExpense = expenseAgg._sum.amount?.toNumber() ?? 0;
 
-    let plannedLessons = 0;
-    let chargedLessons = 0;
+    const netCash = totalIncome - totalExpense;
 
-    for (
-      let d = new Date(monthStart.getTime());
-      d <= monthEnd;
-      d.setDate(d.getDate() + 1)
-    ) {
-      const weekday = d.getDay(); // 0-6, Yakshanba=0
-
-      if (targetWeekdays.includes(weekday)) {
-        plannedLessons += 1;
-
-        if (d >= this.stripTime(joinDate)) {
-          chargedLessons += 1;
-        }
-      }
-    }
-
-    return { plannedLessons, chargedLessons };
+    return {
+      totalCharges, // yozilgan hisoblar jami (chegirmadan keyin)
+      totalIncome, // to‘langan pul jami
+      totalExpense, // chiqimlar jami
+      netCash, // kassadagi sof pul (teorik)
+      totalDebt, // hozirgi umumiy qarzdorlik
+    };
   }
 
-  private stripTime(date: Date): Date {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  async getDebtors(minDebt = 0) {
+    const charges = await this.prisma.tuitionCharge.findMany({
+      where: {
+        status: {
+          in: [TuitionChargeStatus.PENDING, TuitionChargeStatus.PARTIALLY_PAID],
+        },
+      },
+      include: {
+        allocations: true,
+        student: {
+          include: { user: true },
+        },
+        group: true,
+      },
+    });
+
+    const map = new Map<
+      string,
+      {
+        studentId: string;
+        fullName: string;
+        phone: string;
+        totalDebt: number;
+        groups: { groupId: string; name: string; debt: number }[];
+      }
+    >();
+
+    for (const c of charges) {
+      const base = c.amountDue.toNumber();
+      const discount = c.discount.toNumber();
+      const effective = base - discount;
+
+      const paid = c.allocations.reduce(
+        (sum, a) => sum + a.amount.toNumber(),
+        0,
+      );
+
+      const debt = effective - paid;
+      if (debt <= 0) continue;
+
+      const studentId = c.studentId;
+      const key = studentId;
+
+      if (!map.has(key)) {
+        map.set(key, {
+          studentId,
+          fullName: `${c.student.user.firstName} ${c.student.user.lastName}`,
+          phone: c.student.user.phone,
+          totalDebt: 0,
+          groups: [],
+        });
+      }
+
+      const item = map.get(key)!;
+      item.totalDebt += debt;
+      item.groups.push({
+        groupId: c.groupId,
+        name: c.group.name,
+        debt,
+      });
+    }
+
+    const result = Array.from(map.values())
+      .filter((x) => x.totalDebt >= minDebt)
+      .sort((a, b) => b.totalDebt - a.totalDebt);
+
+    return result;
+  }
+
+  async applyDiscount(dto: ApplyDiscountDto) {
+    const charge = await this.prisma.tuitionCharge.findUnique({
+      where: {
+        studentId_groupId_year_month: {
+          studentId: dto.studentId,
+          groupId: dto.groupId,
+          year: dto.year,
+          month: dto.month,
+        },
+      },
+      include: { allocations: true },
+    });
+
+    if (!charge) {
+      throw new NotFoundException('Bu oy uchun hisob topilmadi');
+    }
+
+    const amountDue = charge.amountDue.toNumber();
+
+    if (dto.discountAmount > amountDue) {
+      throw new BadRequestException(
+        'Chegirma summasi hisobdan katta bo‘lishi mumkin emas',
+      );
+    }
+
+    const discount = new Prisma.Decimal(dto.discountAmount);
+
+    // mavjud to‘lovlar bilan statusni qayta hisoblash
+    const paid = charge.allocations.reduce(
+      (sum, a) => sum + a.amount.toNumber(),
+      0,
+    );
+
+    const effectiveAmount = amountDue - dto.discountAmount;
+    const status =
+      paid >= effectiveAmount
+        ? TuitionChargeStatus.PAID
+        : paid > 0
+          ? TuitionChargeStatus.PARTIALLY_PAID
+          : TuitionChargeStatus.PENDING;
+
+    const updated = await this.prisma.tuitionCharge.update({
+      where: { id: charge.id },
+      data: {
+        discount,
+        status,
+      },
+    });
+
+    return updated;
   }
 }
