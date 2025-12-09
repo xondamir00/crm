@@ -76,18 +76,38 @@ export class AuthService {
     };
   }
 
-  async refresh(userId: string, refreshToken: string) {
+  async refresh(refreshToken: string) {
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token topilmadi');
+    }
+
+    let payload: any;
+    try {
+      payload = await this.jwt.verifyAsync(refreshToken, {
+        secret: this.config.get<string>('JWT_REFRESH_SECRET'),
+      });
+    } catch (e) {
+      throw new UnauthorizedException('Yaroqsiz refresh token');
+    }
+
+    const userId = payload.sub as string;
+
     const user = await this.users.findById(userId);
-    if (!user || !user.refreshTokenHash) throw new UnauthorizedException();
+    if (!user || !user.refreshTokenHash) {
+      throw new UnauthorizedException();
+    }
+
     const ok = await argon2.verify(user.refreshTokenHash, refreshToken);
-    if (!ok) throw new ForbiddenException('Invalid refresh token');
+    if (!ok) {
+      throw new ForbiddenException('Invalid refresh token');
+    }
 
     const tokens = await this.signTokens(user);
     const newHash = await argon2.hash(tokens.refreshToken);
     await this.users.setRefreshToken(user.id, newHash);
+
     return tokens;
   }
-
   async logout(userId: string) {
     await this.users.setRefreshToken(userId, null);
     return { success: true };
