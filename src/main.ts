@@ -25,24 +25,39 @@ async function bootstrap() {
   //   credentials: true, //cookie uchun majburiy
   // });
 
+  const allowedOrigins = [
+    'http://localhost:5173',
+    'https://team-soft-ware-fk6s.vercel.app',
+  ];
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin as string | undefined;
+
+    if (origin && allowedOrigins.includes(origin)) {
+      res.header('Access-Control-Allow-Origin', origin);
+    }
+
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header(
+      'Access-Control-Allow-Headers',
+      'Origin, X-Requested-With, Content-Type, Accept, Authorization',
+    );
+    res.header(
+      'Access-Control-Allow-Methods',
+      'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    );
+
+    if (req.method === 'OPTIONS') {
+      // preflight so‘rovni shu yerning o‘zida yakunlaymiz
+      return res.sendStatus(204);
+    }
+
+    next();
+  });
+
+  // 2) Nest’ning CORS’ini ham yoqamiz, lekin origin dinamik (kelgan origin)
   app.enableCors({
-    origin: (origin, callback) => {
-      // origin kelmasa (Postman, health-check), hammasiga ruxsat
-      if (!origin) return callback(null, true);
-
-      const allowedOrigins = [
-        'http://localhost:5173',
-        'https://team-soft-ware-fk6s.vercel.app',
-      ];
-
-      if (allowedOrigins.includes(origin)) {
-        // ruxsat beramiz
-        return callback(null, true);
-      }
-
-      // ruxsat berilmagan origin bo‘lsa, xato qaytaramiz
-      return callback(new Error('Not allowed by CORS'), false);
-    },
+    origin: true,
     credentials: true,
   });
 
