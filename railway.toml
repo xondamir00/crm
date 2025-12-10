@@ -1,0 +1,19 @@
+[build]
+# Majburan NIXPACKS (Node) builder ishlatamiz
+builder = "NIXPACKS"
+
+# Nixpacks’ga Node o‘rnatishni aytamiz
+[build.nixpacksPlan.phases.setup]
+nixPkgs = ["nodejs_22"]
+
+# Install bosqichi
+[build.nixpacksPlan.phases.install]
+cmds = ["npm install --legacy-peer-deps"]
+
+# Build bosqichi
+[build.nixpacksPlan.phases.build]
+cmds = ["npm run build"]
+
+[deploy]
+# Container ishga tushganda bajariladigan komandalar
+startCommand = "npm run prisma:migrate:deploy && npm run start:prod"
