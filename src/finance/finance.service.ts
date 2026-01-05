@@ -11,7 +11,6 @@ import {
   PaymentMethod,
   DaysPattern,
   Group,
-  TuitionCharge,
 } from '@prisma/client';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
@@ -21,6 +20,11 @@ import { ApplyDiscountDto } from './dto/apply-discount.dto';
 @Injectable()
 export class FinanceService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private roundToThousand(amount: number): number {
+  if (!Number.isFinite(amount)) return 0;
+  return Math.round(amount / 1000) * 1000;
+  }
 
   async createPayment(dto: CreatePaymentDto, recordedById: string) {
     // 1. Student tekshir
@@ -198,6 +202,7 @@ export class FinanceService {
 
     const totalPaid = allocationsAgg._sum.amount?.toNumber() ?? 0;
     const debt = totalCharges - totalPaid;
+    const debtRounded = this.roundToThousand(debt);
 
     const lastPayments = await this.prisma.payment.findMany({
       where: { studentId },
@@ -210,6 +215,7 @@ export class FinanceService {
       totalCharges,
       totalPaid,
       debt,
+      debtRounded,
       lastPayments,
     };
   }
@@ -402,6 +408,7 @@ export class FinanceService {
     const totalAllocated = allocAgg._sum.amount?.toNumber() ?? 0;
 
     const totalDebt = totalCharges - totalAllocated;
+    const totalDebtRounded = this.roundToThousand(totalDebt);
 
     // 3) Naxt kirim (Payment jadvali bo‘yicha)
     const incomeAgg = await this.prisma.payment.aggregate({
@@ -424,6 +431,7 @@ export class FinanceService {
       totalExpense, // chiqimlar jami
       netCash, // kassadagi sof pul (teorik)
       totalDebt, // hozirgi umumiy qarzdorlik
+       totalDebtRounded,
     };
   }
 
@@ -450,6 +458,7 @@ export class FinanceService {
         fullName: string;
         phone: string;
         totalDebt: number;
+        totalDebtRounded: number;
         groups: { groupId: string; name: string; debt: number }[];
       }
     >();
@@ -482,6 +491,7 @@ export class FinanceService {
 
       const item = map.get(key)!;
       item.totalDebt += debt;
+      item.totalDebtRounded = this.roundToThousand(item.totalDebt);
       item.groups.push({
         groupId: c.groupId,
         name: c.group.name,
