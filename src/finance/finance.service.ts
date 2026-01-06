@@ -22,8 +22,8 @@ export class FinanceService {
   constructor(private readonly prisma: PrismaService) {}
 
   private roundToThousand(amount: number): number {
-  if (!Number.isFinite(amount)) return 0;
-  return Math.round(amount / 1000) * 1000;
+    if (!Number.isFinite(amount)) return 0;
+    return Math.round(amount / 1000) * 1000;
   }
 
   async createPayment(dto: CreatePaymentDto, recordedById: string) {
@@ -431,7 +431,7 @@ export class FinanceService {
       totalExpense, // chiqimlar jami
       netCash, // kassadagi sof pul (teorik)
       totalDebt, // hozirgi umumiy qarzdorlik
-       totalDebtRounded,
+      totalDebtRounded,
     };
   }
 
@@ -485,6 +485,7 @@ export class FinanceService {
           fullName: `${c.student.user.firstName} ${c.student.user.lastName}`,
           phone: c.student.user.phone,
           totalDebt: 0,
+          totalDebtRounded: 0,
           groups: [],
         });
       }
